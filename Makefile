@@ -693,7 +693,7 @@ lto-clang-flags	:= -flto -fvisibility=hidden
 
 # merge module sections (51042de0309f; 4.9 passes module linker scripts
 # through KBUILD_LDFLAGS_MODULE rather than KBUILD_LDS_MODULE)
-KBUILD_LDFLAGS_MODULE += -T $(srctree)/scripts/module-lto.lds
+KBUILD_LDFLAGS_MODULE += -T scripts/module-lto.lds
 
 # allow disabling only clang LTO where needed
 DISABLE_LTO_CLANG := -fno-lto -fvisibility=default
