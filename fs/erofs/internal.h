@@ -63,6 +63,9 @@ struct erofs_sb_info {
 	struct radix_tree_root workstn_tree;
 	spinlock_t tree_lock;
 
+	/* strategy of sync decompression (false - auto, true - force on) */
+	bool readahead_sync_decompress;
+
 	/* threshold for decompression synchronously */
 	unsigned int max_sync_decompress_pages;
 
@@ -244,7 +247,7 @@ struct erofs_inode {
 
 	unsigned char datalayout;
 	unsigned char inode_isize;
-	unsigned short xattr_isize;
+	unsigned int xattr_isize;
 
 	unsigned int xattr_shared_count;
 	unsigned int *xattr_shared_xattrs;
