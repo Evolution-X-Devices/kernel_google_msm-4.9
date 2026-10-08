@@ -4368,7 +4368,15 @@ static int ipc_router_core_init(void)
 	for (i = 0; i < LP_HASH_SIZE; i++)
 		INIT_LIST_HEAD(&local_ports[i]);
 
-	down_write(&routing_table_lock_lha3);
+	/*
+	 * One-time init only (is_ipc_router_inited gates it): the routing table
+	 * is never taken under ipc_router_init_lock after the router is up, so
+	 * the init_lock -> routing_table_lock -> tx_lock -> ss_reset_rwlock ->
+	 * init_lock cycle lockdep sees cannot close. Separate subclass so it
+	 * doesn't turn lockdep off (debug variants); same as down_write()
+	 * without LOCKDEP.
+	 */
+	down_write_nested(&routing_table_lock_lha3, SINGLE_DEPTH_NESTING);
 	if (!routing_table_inited) {
 		init_routing_table();
 		routing_table_inited = 1;
