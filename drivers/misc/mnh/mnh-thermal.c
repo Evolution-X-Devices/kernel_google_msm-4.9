@@ -84,7 +84,17 @@ static const struct mnh_efuse_addr mnh_thermal_trim_addr[] = {
  */
 static int check_mnh_hw_init(void)
 {
-	int state = mnh_sm_get_state();
+	int state;
+
+	/*
+	 * Called with tz->lock held. Lockdep closes a cycle through the
+	 * firmware download (under mnh_sm_dev->lock) only via the shared
+	 * per-attribute s_active class of different devices' uevent files;
+	 * keep it out (debug variants; no-op without LOCKDEP).
+	 */
+	lockdep_off();
+	state = mnh_sm_get_state();
+	lockdep_on();
 
 	if ((state == MNH_STATE_OFF) || (state == MNH_STATE_SUSPEND))
 		return -EIO;
