@@ -653,9 +653,14 @@ static int rpmh_arc_votes_init(struct gmu_device *gmu,
 			continue;
 		}
 
-		/* Otherwise get the value from the OPP API */
+		/*
+		 * Otherwise get the value from the OPP API. This (pre-refcount)
+		 * OPP API needs rcu_read_lock() held while the opp is used.
+		 */
+		rcu_read_lock();
 		opp = dev_pm_opp_find_freq_exact(dev, freq_tbl[i], true);
 		if (IS_ERR(opp)) {
+			rcu_read_unlock();
 			dev_err(&gmu->pdev->dev,
 				"Failed to find opp freq %d of %s\n",
 				freq_tbl[i], debug_strs[type]);
@@ -664,6 +669,7 @@ static int rpmh_arc_votes_init(struct gmu_device *gmu,
 
 		/* Values from OPP framework are offset by 1 */
 		vlvl_tbl[i] = dev_pm_opp_get_voltage(opp) - 1;
+		rcu_read_unlock();
 	}
 
 	ret = setup_volt_dependency_tbl(votes,
