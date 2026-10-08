@@ -212,7 +212,8 @@ bool csr_ll_find_entry(tDblLinkList *pList, tListElem *pEntryToFind)
 	return fFound;
 }
 
-QDF_STATUS csr_ll_open(tHddHandle hHdd, tDblLinkList *pList)
+/* name in parentheses: csr_link_list.h wraps csr_ll_open() in a macro under LOCKDEP */
+QDF_STATUS (csr_ll_open)(tHddHandle hHdd, tDblLinkList *pList)
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	QDF_STATUS qdf_status;
