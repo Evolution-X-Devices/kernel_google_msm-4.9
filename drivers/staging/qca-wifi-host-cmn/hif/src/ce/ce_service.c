@@ -1451,7 +1451,8 @@ ce_cancel_send_next(struct CE_handle *copyeng,
 		return QDF_STATUS_E_FAILURE;
 
 	scn = CE_state->scn;
-	qdf_spin_lock(&CE_state->ce_index_lock);
+	/* _bh: the CE tasklet (ce_per_engine_service) takes this lock too */
+	qdf_spin_lock_bh(&CE_state->ce_index_lock);
 	nentries_mask = src_ring->nentries_mask;
 	sw_index = src_ring->sw_index;
 	write_index = src_ring->write_index;
@@ -1488,7 +1489,7 @@ ce_cancel_send_next(struct CE_handle *copyeng,
 	} else {
 		status = QDF_STATUS_E_FAILURE;
 	}
-	qdf_spin_unlock(&CE_state->ce_index_lock);
+	qdf_spin_unlock_bh(&CE_state->ce_index_lock);
 
 	return status;
 }
