@@ -144,8 +144,9 @@ struct rmnet_phys_ep_config *_rmnet_get_phys_ep_config
 	struct rmnet_phys_ep_conf_s *_rmnet_phys_ep_config;
 
 	if (_rmnet_is_physical_endpoint_associated(dev)) {
+		/* config paths hold rtnl, the rx path holds RCU */
 		_rmnet_phys_ep_config = (struct rmnet_phys_ep_conf_s *)
-					rcu_dereference(dev->rx_handler_data);
+					rcu_dereference_rtnl(dev->rx_handler_data);
 		if (_rmnet_phys_ep_config && _rmnet_phys_ep_config->config)
 			return (struct rmnet_phys_ep_config *)
 					_rmnet_phys_ep_config->config;
@@ -733,14 +734,18 @@ int rmnet_unassociate_network_device(struct net_device *dev)
 	}
 
 	config = (struct rmnet_phys_ep_conf_s *)
-		rcu_dereference(dev->rx_handler_data);
+		rtnl_dereference(dev->rx_handler_data);
 
 	if (!config)
 		return RMNET_CONFIG_UNKNOWN_ERROR;
 
-	kfree(config);
-
+	/*
+	 * Unregister first: it clears rx_handler(_data) and waits for packets
+	 * already in rmnet_rx_handler(); only then is the config unused.
+	 */
 	netdev_rx_handler_unregister(dev);
+
+	kfree(config);
 
 	/* Explicitly release the reference from the device */
 	dev_put(dev);
