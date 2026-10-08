@@ -122,7 +122,8 @@ static inline int _rmnet_is_physical_endpoint_associated(struct net_device *dev)
 {
 	rx_handler_func_t *rx_handler;
 
-	rx_handler = rcu_dereference(dev->rx_handler);
+	/* only compared, never dereferenced: valid without RCU or rtnl */
+	rx_handler = rcu_access_pointer(dev->rx_handler);
 
 	if (rx_handler == rmnet_rx_handler)
 		return 1;
