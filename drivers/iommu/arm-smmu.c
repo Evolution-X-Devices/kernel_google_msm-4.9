@@ -3985,7 +3985,7 @@ static int arm_smmu_alloc_cb(struct iommu_domain *domain,
 			return -EINVAL;
 	}
 
-	mutex_lock(&smmu->stream_map_mutex);
+	mutex_lock_nested(&smmu->stream_map_mutex, SINGLE_DEPTH_NESTING); /* under init_mutex: see arm_smmu_domain_add_master() */
 	for_each_cfg_sme(fwspec, i, idx) {
 		if (smmu->s2crs[idx].cb_handoff)
 			cb = smmu->s2crs[idx].cbndx;
