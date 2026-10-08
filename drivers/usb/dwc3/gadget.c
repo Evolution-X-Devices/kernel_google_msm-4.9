@@ -365,8 +365,14 @@ int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 
 		if (unlikely(needs_wakeup)) {
 			ret = __dwc3_gadget_wakeup(dwc);
-			dev_WARN_ONCE(dwc->dev, ret, "wakeup failed --> %d\n",
-					ret);
+			/*
+			 * Recoverable (the transfer is still issued): an error,
+			 * not a WARN -- with panic_on_warn (debug variants) the
+			 * WARN killed USB in recovery, so fastbootd never came up.
+			 */
+			if (ret)
+				dev_err_ratelimited(dwc->dev,
+						    "wakeup failed --> %d\n", ret);
 		}
 	}
 
