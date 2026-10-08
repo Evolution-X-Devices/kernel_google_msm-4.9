@@ -107,4 +107,23 @@ tListElem *csr_ll_next(tDblLinkList *pList, tListElem *pEntry,
 tListElem *csr_ll_previous(tDblLinkList *pList, tListElem *pEntry,
 		bool fInterlocked);
 bool csr_ll_find_entry(tDblLinkList *pList, tListElem *pEntryToFind);
+
+#ifdef CONFIG_LOCKDEP
+#include <linux/lockdep.h>
+/*
+ * csr_ll_open() creates every list's mutex at one spot, so all CSR lists
+ * shared one lockdep class (one list locked while checking another looked
+ * recursive). One class per call site, named after the list -- only when this
+ * call opened the list: an already open list may be held.
+ */
+#define csr_ll_open(hdd, list) ({					\
+	static struct lock_class_key __csr_ll_key;			\
+	bool __csr_ll_new = (list) && (list)->Flag != LIST_FLAG_OPEN;	\
+	QDF_STATUS __csr_ll_status = csr_ll_open(hdd, list);		\
+	if (__csr_ll_new && QDF_IS_STATUS_SUCCESS(__csr_ll_status))	\
+		lockdep_set_class_and_name(&(list)->Lock.m_lock,	\
+					   &__csr_ll_key, #list);	\
+	__csr_ll_status;						\
+})
+#endif
 #endif
