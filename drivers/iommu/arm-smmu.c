@@ -2374,7 +2374,7 @@ static void arm_smmu_domain_remove_master(struct arm_smmu_domain *smmu_domain,
 
 	tlb = smmu_domain->pgtbl_cfg.tlb;
 
-	mutex_lock(&smmu->stream_map_mutex);
+	mutex_lock_nested(&smmu->stream_map_mutex, SINGLE_DEPTH_NESTING); /* see arm_smmu_domain_add_master() */
 	for_each_cfg_sme(fwspec, i, idx) {
 		WARN_ON(s2cr[idx].attach_count == 0);
 		s2cr[idx].attach_count -= 1;
@@ -2400,7 +2400,16 @@ static int arm_smmu_domain_add_master(struct arm_smmu_domain *smmu_domain,
 	u8 cbndx = smmu_domain->cfg.cbndx;
 	int i, idx;
 
-	mutex_lock(&smmu->stream_map_mutex);
+	/*
+	 * Attach/detach run under the domain init_mutex, and the iommu group
+	 * mutex is taken under stream_map_mutex when a device is added
+	 * (arm_smmu_master_alloc_smes): lockdep sees group->mutex ->
+	 * init_mutex -> stream_map_mutex -> group->mutex. Needs a device added
+	 * to a group while that group is attached; not at once in practice.
+	 * Separate subclass so it doesn't turn lockdep off (debug variants);
+	 * same as mutex_lock() without LOCKDEP.
+	 */
+	mutex_lock_nested(&smmu->stream_map_mutex, SINGLE_DEPTH_NESTING);
 	for_each_cfg_sme(fwspec, i, idx) {
 		if (s2cr[idx].attach_count++ > 0)
 			continue;
