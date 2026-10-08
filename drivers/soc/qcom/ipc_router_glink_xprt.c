@@ -375,7 +375,15 @@ static void glink_xprt_read_data(struct kthread_work *work)
 	struct ipc_router_glink_xprt *glink_xprtp = rx_work->glink_xprtp;
 	bool reuse_intent = false;
 
-	down_read(&glink_xprtp->ss_reset_rwlock);
+	/*
+	 * Lockdep sees ss_reset_rwlock -> routing_table_lock here (rx ->
+	 * xprt_notify) and routing_table_lock -> tx_lock -> ss_reset_rwlock on
+	 * send. All are read locks: it can only deadlock with a writer queued
+	 * (subsystem reset) at the same moment. Known, not fixed (legacy IPC
+	 * router); separate subclass so it doesn't turn lockdep off (debug
+	 * variants); same as down_read() without LOCKDEP.
+	 */
+	down_read_nested(&glink_xprtp->ss_reset_rwlock, SINGLE_DEPTH_NESTING);
 	if (glink_xprtp->ss_reset) {
 		IPC_RTR_ERR("%s: %s channel reset\n",
 			__func__, glink_xprtp->xprt.name);
