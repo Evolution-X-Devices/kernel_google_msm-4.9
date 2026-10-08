@@ -2401,7 +2401,25 @@ static int __hdd_open(struct net_device *dev)
 		return -EBUSY;
 	}
 
-	mutex_lock(&hdd_init_deinit_lock);
+	/*
+	 * Probe/remove hold hdd_init_deinit_lock across the whole (de)init,
+	 * which takes rtnl_lock (wiphy_register); we are called with rtnl
+	 * held (dev_open). Waiting for the lock here while the driver loads
+	 * deadlocks both -- and open fails during load anyway (the
+	 * cds_is_driver_loaded() check below), so fail before locking.
+	 */
+	if (cds_is_load_or_unload_in_progress()) {
+		hdd_err("Driver load/unload in progress; Please try again.");
+		return -EBUSY;
+	}
+
+	/*
+	 * The rtnl -> hdd_init_deinit_lock order above stays in lockdep's
+	 * graph (the load check narrows, not closes, the window); a separate
+	 * subclass keeps it from turning lockdep off on debug_locking. Same
+	 * as mutex_lock() without LOCKDEP.
+	 */
+	mutex_lock_nested(&hdd_init_deinit_lock, SINGLE_DEPTH_NESTING);
 	hdd_start_driver_ops_timer(eHDD_DRV_OP_IFF_UP);
 
 	/*
