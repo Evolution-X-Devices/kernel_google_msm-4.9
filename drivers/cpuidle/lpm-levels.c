@@ -708,7 +708,7 @@ static int cpu_power_select(struct cpuidle_device *dev,
 done_select:
 	trace_cpu_power_select_rcuidle(best_level, sleep_us, latency_us, next_event_us);
 
-	trace_cpu_pred_select(idx_restrict_time ? 2 : (predicted ? 1 : 0),
+	trace_cpu_pred_select_rcuidle(idx_restrict_time ? 2 : (predicted ? 1 : 0),
 			predicted, htime);
 
 	return best_level;
@@ -890,7 +890,7 @@ static void update_cluster_history(struct cluster_history *history, int idx)
 	if (history->nsamp < MAXSAMPLES)
 		history->nsamp++;
 
-	trace_cluster_pred_hist(cluster->cluster_name,
+	trace_cluster_pred_hist_rcuidle(cluster->cluster_name,
 		history->mode[history->hptr], history->resi[history->hptr],
 		history->hptr, tmr);
 
@@ -1008,7 +1008,7 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle,
 
 	*ispred = predicted;
 
-	trace_cluster_pred_select(cluster->cluster_name, best_level, sleep_us,
+	trace_cluster_pred_select_rcuidle(cluster->cluster_name, best_level, sleep_us,
 						latency_us, predicted, pred_us);
 
 	return best_level;
@@ -1388,7 +1388,7 @@ static void update_history(struct cpuidle_device *dev, int idx)
 
 	history->mode[history->hptr] = idx;
 
-	trace_cpu_pred_hist(history->mode[history->hptr],
+	trace_cpu_pred_hist_rcuidle(history->mode[history->hptr],
 		history->resi[history->hptr], history->hptr, tmr);
 
 	if (history->nsamp < MAXSAMPLES)
