@@ -346,7 +346,14 @@ static inline void init_sched_boost(struct schedtune *st)
 
 bool same_schedtune(struct task_struct *tsk1, struct task_struct *tsk2)
 {
-	return task_schedtune(tsk1) == task_schedtune(tsk2);
+	bool same;
+
+	/* task_css() needs RCU; callers hold rq/pi locks, which do not count */
+	rcu_read_lock();
+	same = task_schedtune(tsk1) == task_schedtune(tsk2);
+	rcu_read_unlock();
+
+	return same;
 }
 
 void update_cgroup_boost_settings(void)
@@ -379,9 +386,16 @@ void restore_cgroup_boost_settings(void)
 
 bool task_sched_boost(struct task_struct *p)
 {
-	struct schedtune *st = task_schedtune(p);
+	struct schedtune *st;
+	bool enabled;
 
-	return st->sched_boost_enabled;
+	/* task_css() needs RCU (called from enqueue with rq->lock held) */
+	rcu_read_lock();
+	st = task_schedtune(p);
+	enabled = st->sched_boost_enabled;
+	rcu_read_unlock();
+
+	return enabled;
 }
 
 static u64
