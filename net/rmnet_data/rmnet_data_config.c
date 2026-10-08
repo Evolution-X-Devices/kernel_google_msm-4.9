@@ -144,9 +144,11 @@ struct rmnet_phys_ep_config *_rmnet_get_phys_ep_config
 	struct rmnet_phys_ep_conf_s *_rmnet_phys_ep_config;
 
 	if (_rmnet_is_physical_endpoint_associated(dev)) {
-		/* config paths hold rtnl, the rx path holds RCU */
+		/* rx holds RCU, tx (dev_queue_xmit) RCU-bh, config paths rtnl */
 		_rmnet_phys_ep_config = (struct rmnet_phys_ep_conf_s *)
-					rcu_dereference_rtnl(dev->rx_handler_data);
+			rcu_dereference_check(dev->rx_handler_data,
+					      rcu_read_lock_bh_held() ||
+					      lockdep_rtnl_is_held());
 		if (_rmnet_phys_ep_config && _rmnet_phys_ep_config->config)
 			return (struct rmnet_phys_ep_config *)
 					_rmnet_phys_ep_config->config;
