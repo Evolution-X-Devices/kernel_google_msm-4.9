@@ -241,7 +241,25 @@ typedef __qdf_mutex_t qdf_mutex_t;
 
 /* function Declaration */
 QDF_STATUS qdf_mutex_create(qdf_mutex_t *m, const char *func, int line);
+#ifdef CONFIG_LOCKDEP
+/*
+ * mutex_init() runs once inside qdf_mutex_create(), so all qdf mutexes shared
+ * one lockdep class (sme global lock -> csr_ll_lock looked recursive). Give
+ * each call site its own class, named after the lock -- only on success: a
+ * failed create may be an already initialized (even held) mutex.
+ */
+#define qdf_mutex_create(m) ({						\
+	static struct lock_class_key __qdf_mutex_key;			\
+	QDF_STATUS __qdf_mutex_status =				\
+		qdf_mutex_create(m, __func__, __LINE__);		\
+	if (__qdf_mutex_status == QDF_STATUS_SUCCESS)			\
+		lockdep_set_class_and_name(&(m)->m_lock,		\
+					   &__qdf_mutex_key, #m);	\
+	__qdf_mutex_status;						\
+})
+#else
 #define qdf_mutex_create(m) qdf_mutex_create(m, __func__, __LINE__)
+#endif
 
 QDF_STATUS qdf_mutex_acquire(qdf_mutex_t *m);
 
