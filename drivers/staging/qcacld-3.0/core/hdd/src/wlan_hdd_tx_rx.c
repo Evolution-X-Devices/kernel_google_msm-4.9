@@ -1466,7 +1466,7 @@ static bool hdd_is_duplicate_ip_arp(struct sk_buff *skb)
 	struct in_ifaddr **ifap = NULL;
 	struct in_ifaddr *ifa = NULL;
 	struct in_device *in_dev;
-	uint32_t arp_ip, if_ip;
+	uint32_t arp_ip, if_ip = 0;
 
 	if (NULL == skb)
 		return false;
@@ -1476,7 +1476,9 @@ static bool hdd_is_duplicate_ip_arp(struct sk_buff *skb)
 	if (!skb->dev)
 		return false;
 
-	in_dev = __in_dev_get_rtnl(skb->dev);
+	/* RX path, no rtnl: read the in_device and its ifa_list under RCU */
+	rcu_read_lock();
+	in_dev = __in_dev_get_rcu(skb->dev);
 	if (in_dev) {
 		for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
 			ifap = &ifa->ifa_next) {
@@ -1485,13 +1487,11 @@ static bool hdd_is_duplicate_ip_arp(struct sk_buff *skb)
 		}
 	}
 
-	if (ifa && ifa->ifa_local) {
+	if (ifa && ifa->ifa_local)
 		if_ip = ifa->ifa_local;
-		if (if_ip == arp_ip)
-			return true;
-	}
+	rcu_read_unlock();
 
-	return false;
+	return if_ip && if_ip == arp_ip;
 }
 
 /**
@@ -1511,7 +1511,11 @@ static bool hdd_is_arp_local(struct sk_buff *skb)
 
 	arp = (struct arphdr *)skb->data;
 	if (arp->ar_op == htons(ARPOP_REQUEST)) {
-		in_dev = __in_dev_get_rtnl(skb->dev);
+		bool match = false;
+
+		/* RX path, no rtnl: read the in_device and its ifa_list under RCU */
+		rcu_read_lock();
+		in_dev = __in_dev_get_rcu(skb->dev);
 		if (in_dev) {
 			for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
 				ifap = &ifa->ifa_next) {
@@ -1528,8 +1532,11 @@ static bool hdd_is_arp_local(struct sk_buff *skb)
 			hdd_debug("ARP packet: local IP: %x dest IP: %x",
 				ifa->ifa_local, tip);
 			if (ifa->ifa_local == tip)
-				return true;
+				match = true;
 		}
+		rcu_read_unlock();
+		if (match)
+			return true;
 	}
 
 	return false;
