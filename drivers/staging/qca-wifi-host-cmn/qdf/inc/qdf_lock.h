@@ -263,7 +263,23 @@ static inline void qdf_spinlock_create(qdf_spinlock_t *lock, const char *func,
 	qdf_lock_stats_create(&lock->stats, func, line);
 }
 
+#ifdef CONFIG_LOCKDEP
+/*
+ * spin_lock_init() runs inside the static inline __qdf_spinlock_create(), so
+ * every qdf spinlock of one source file got the same lockdep class and any
+ * nesting of two of them (HTC lookup_queue_lock -> HTCTxLock, DFS radarq ->
+ * eventq) looked like recursive locking, which turns lockdep off. Give each
+ * call site its own class, named after the lock, like spin_lock_init() does.
+ */
+#define qdf_spinlock_create(x) do {					\
+	static struct lock_class_key __qdf_spinlock_key;		\
+	qdf_spinlock_create(x, __func__, __LINE__);			\
+	lockdep_set_class_and_name(&(x)->lock.spinlock,		\
+				   &__qdf_spinlock_key, #x);		\
+} while (0)
+#else
 #define qdf_spinlock_create(x) qdf_spinlock_create(x, __func__, __LINE__)
+#endif
 
 /**
  * qdf_spinlock_destroy - Delete a spinlock
