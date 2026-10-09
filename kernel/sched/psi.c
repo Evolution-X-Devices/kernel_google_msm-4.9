@@ -179,7 +179,7 @@ static struct psi_group psi_system = {
 
 static void psi_avgs_work(struct work_struct *work);
 
-static void poll_timer_fn(struct timer_list *t);
+static void poll_timer_fn(unsigned long data);
 
 static void group_init(struct psi_group *group)
 {
@@ -202,7 +202,7 @@ static void group_init(struct psi_group *group)
 	group->polling_next_update = ULLONG_MAX;
 	group->polling_until = 0;
 	init_waitqueue_head(&group->poll_wait);
-	timer_setup(&group->poll_timer, poll_timer_fn, 0);
+	setup_timer(&group->poll_timer, poll_timer_fn, (unsigned long)group);
 	rcu_assign_pointer(group->poll_task, NULL);
 }
 
@@ -679,9 +679,9 @@ static int psi_poll_worker(void *data)
 	return 0;
 }
 
-static void poll_timer_fn(struct timer_list *t)
+static void poll_timer_fn(unsigned long data)
 {
-	struct psi_group *group = from_timer(group, t, poll_timer);
+	struct psi_group *group = (struct psi_group *)data;
 
 	atomic_set(&group->poll_wakeup, 1);
 	wake_up_interruptible(&group->poll_wait);
