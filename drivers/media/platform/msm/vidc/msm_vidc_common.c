@@ -4853,6 +4853,7 @@ int msm_comm_release_scratch_buffers(struct msm_vidc_inst *inst,
 	struct msm_vidc_core *core;
 	struct hfi_device *hdev;
 	enum hal_buffer sufficiency = HAL_BUFFER_NONE;
+	LIST_HEAD(release_list);
 
 	if (!inst) {
 		dprintk(VIDC_ERR,
@@ -4882,8 +4883,17 @@ int msm_comm_release_scratch_buffers(struct msm_vidc_inst *inst,
 					HAL_BUFFER_INTERNAL_SCRATCH_2);
 	}
 
+	/*
+	 * Don't hold scratchbufs.lock across the HFI release (hdevice->lock
+	 * and a firmware round trip): the list lock is also taken under the
+	 * vb2 queue's mmap_lock. Take the buffers off the list, release them,
+	 * then put back the ones kept for reuse.
+	 */
 	mutex_lock(&inst->scratchbufs.lock);
-	list_for_each_entry_safe(buf, dummy, &inst->scratchbufs.list, list) {
+	list_splice_init(&inst->scratchbufs.list, &release_list);
+	mutex_unlock(&inst->scratchbufs.lock);
+
+	list_for_each_entry_safe(buf, dummy, &release_list, list) {
 		handle = &buf->smem;
 		buffer_info.buffer_size = handle->size;
 		buffer_info.buffer_type = buf->buffer_type;
@@ -4893,14 +4903,12 @@ int msm_comm_release_scratch_buffers(struct msm_vidc_inst *inst,
 		rc = call_hfi_op(hdev, session_release_buffers,
 				(void *)inst->session, &buffer_info);
 		if (!rc) {
-			mutex_unlock(&inst->scratchbufs.lock);
 			rc = wait_for_sess_signal_receipt(inst,
 				HAL_SESSION_RELEASE_BUFFER_DONE);
 			if (rc)
 				dprintk(VIDC_WARN,
 					"%s: wait for signal failed, rc %d\n",
 					__func__, rc);
-			mutex_lock(&inst->scratchbufs.lock);
 		} else {
 			dprintk(VIDC_WARN,
 				"Rel scrtch buf fail:%x, %d\n",
@@ -4917,7 +4925,9 @@ int msm_comm_release_scratch_buffers(struct msm_vidc_inst *inst,
 		kfree(buf);
 	}
 
-	mutex_unlock(&inst->scratchbufs.lock);
+	/* what is left is kept for reuse */
+	mutex_lock(&inst->scratchbufs.lock);
+	list_splice_tail(&release_list, &inst->scratchbufs.list);
 	return rc;
 }
 
