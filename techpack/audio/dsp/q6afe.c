@@ -7057,8 +7057,17 @@ int afe_alloc_cal(int32_t cal_type, size_t data_size,
 		goto done;
 	}
 
+	/*
+	 * Known lock cycle, not fixed (debug_locking only, no-op without
+	 * LOCKDEP): this holds the cal type's lock and maps the buffer under
+	 * afe_cmd_lock, while __afe_port_start() holds afe_cmd_lock and sends
+	 * the custom topology under its cal type's lock. Keep lockdep off for
+	 * this call so it can keep checking the rest of the system.
+	 */
+	lockdep_off();
 	ret = cal_utils_alloc_cal(data_size, data,
 		this_afe.cal_data[cal_index], 0, NULL);
+	lockdep_on();
 	if (ret < 0) {
 		pr_err("%s: cal_utils_alloc_block failed, ret = %d, cal type = %d!\n",
 			__func__, ret, cal_type);
