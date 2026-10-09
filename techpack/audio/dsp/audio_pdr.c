@@ -84,19 +84,10 @@ void *audio_pdr_service_register(int domain_id,
 		return ERR_PTR(-EINVAL);
 	}
 
-	/*
-	 * Lockdep reports notifier_mutex -> notif_add_lock -> service_list_lock
-	 * here against the service-arrive callback (service_list_lock ->
-	 * notifier_mutex). Known, not fixed (legacy service notifier); keep
-	 * lockdep out so it keeps checking everything else (debug variants;
-	 * no-op without LOCKDEP).
-	 */
-	lockdep_off();
 	handle = service_notif_register_notifier(
 		audio_pdr_services[domain_id].domain_list[0].name,
 		audio_pdr_services[domain_id].domain_list[0].instance_id,
 		nb, curr_state);
-	lockdep_on();
 	if (IS_ERR_OR_NULL(handle)) {
 		pr_err("%s: Failed to register for service %s, instance %d\n",
 			__func__,
