@@ -2226,6 +2226,7 @@ end:
 static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 {
 	int rc;
+	void *payload;
 
 	mutex_lock(&link->lock);
 	spin_lock_bh(&link->link_state_spin_lock);
@@ -2235,14 +2236,23 @@ static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 	crm_timer_exit(&link->watchdog);
 	spin_unlock_bh(&link->link_state_spin_lock);
 	__cam_req_mgr_print_req_tbl(&link->req);
+	payload = link->workq->task.pool[0].payload;
 
-	/* Destroy workq payload data */
-	kfree(link->workq->task.pool[0].payload);
-	link->workq->task.pool[0].payload = NULL;
+	/*
+	 * Don't destroy the workqueue under link->lock: link work takes
+	 * session and device (sensor) mutexes, and devices add requests to
+	 * this link (link->lock) under those mutexes. The link is IDLE now and
+	 * cam_req_mgr_cb_add_req() checks that under link->lock, so dropping
+	 * the lock here waits out an add_req already past the check; later
+	 * ones bail without enqueueing.
+	 */
+	mutex_unlock(&link->lock);
 
-	/* Destroy workq of link */
+	/* Destroy workq of link, then its payload data (no worker left) */
 	cam_req_mgr_workq_destroy(&link->workq);
+	kfree(payload);
 
+	mutex_lock(&link->lock);
 	/* Cleanup request tables and unlink devices */
 	rc = __cam_req_mgr_destroy_link_info(link);
 	if (rc)
