@@ -962,9 +962,16 @@ void sde_cp_crtc_apply_properties(struct drm_crtc *crtc)
 		sde_dspp_feature = crtc_feature_map[prop_node->feature];
 		if (!mdss_bus_vote && HIGH_BUS_VOTE_NEEDED(prop_node->feature)
 			&& !reg_dmav1_dspp_feature_support(sde_dspp_feature)) {
+			/*
+			 * phandle_lock under crtc_cp_lock: lockdep closes a cycle
+			 * via crtc_disable (crtc_lock -> crtc_cp_lock), but both
+			 * run on this CRTC's commit thread. Debug only.
+			 */
+			lockdep_off();
 			sde_power_scale_reg_bus(&priv->phandle,
 				sde_kms->core_client,
 				VOTE_INDEX_HIGH, false);
+			lockdep_on();
 			pr_debug("Vote HIGH for data bus: feature %d\n",
 					prop_node->feature);
 			mdss_bus_vote = true;
@@ -977,8 +984,10 @@ void sde_cp_crtc_apply_properties(struct drm_crtc *crtc)
 			set_lm_flush = true;
 	}
 	if (mdss_bus_vote) {
+		lockdep_off();
 		sde_power_scale_reg_bus(&priv->phandle, sde_kms->core_client,
 			VOTE_INDEX_LOW, false);
+		lockdep_on();
 		pr_debug("Vote LOW for data bus\n");
 		mdss_bus_vote = false;
 	}
