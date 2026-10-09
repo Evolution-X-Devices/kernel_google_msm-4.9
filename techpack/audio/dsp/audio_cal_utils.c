@@ -375,7 +375,8 @@ done:
  *
  * Returns 0 on success, EINVAL otherwise
  */
-int cal_utils_create_cal_types(int num_cal_types,
+/* name in parentheses: a lockdep wrapper macro shares it (header) */
+int (cal_utils_create_cal_types)(int num_cal_types,
 			struct cal_type_data **cal_type,
 			struct cal_type_info *info)
 {
@@ -431,6 +432,20 @@ done:
 	return ret;
 }
 EXPORT_SYMBOL(cal_utils_create_cal_types);
+
+#ifdef CONFIG_LOCKDEP
+void cal_utils_set_lock_class(int num_cal_types,
+			struct cal_type_data **cal_type,
+			struct lock_class_key *key)
+{
+	int i;
+
+	for (i = 0; i < num_cal_types; i++)
+		if (cal_type[i] != NULL)
+			lockdep_set_class(&cal_type[i]->lock, key);
+}
+EXPORT_SYMBOL(cal_utils_set_lock_class);
+#endif
 
 /*
  * Importing and releasing an ION buffer maps/unmaps it in the ADSP SMMU,
