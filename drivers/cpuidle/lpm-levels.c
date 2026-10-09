@@ -347,7 +347,7 @@ static void histtimer_cancel(void)
 	if (ktime_to_us(time_rem) <= 0)
 		return;
 
-	hrtimer_try_to_cancel(cpu_histtimer);
+	RCU_NONIDLE(hrtimer_try_to_cancel(cpu_histtimer));
 }
 
 static enum hrtimer_restart histtimer_fn(struct hrtimer *h)
@@ -367,7 +367,8 @@ static void histtimer_start(uint32_t time_us)
 	struct hrtimer *cpu_histtimer = &per_cpu(histtimer, cpu);
 
 	cpu_histtimer->function = histtimer_fn;
-	hrtimer_start(cpu_histtimer, hist_ktime, HRTIMER_MODE_REL_PINNED);
+	RCU_NONIDLE(hrtimer_start(cpu_histtimer, hist_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static void cluster_timer_init(struct lpm_cluster *cluster)
@@ -395,7 +396,7 @@ static void clusttimer_cancel(void)
 
 	time_rem = hrtimer_get_remaining(&cluster->histtimer);
 	if (ktime_to_us(time_rem) > 0)
-		hrtimer_try_to_cancel(&cluster->histtimer);
+		RCU_NONIDLE(hrtimer_try_to_cancel(&cluster->histtimer));
 
 	if (cluster->parent) {
 		time_rem = hrtimer_get_remaining(
@@ -404,7 +405,7 @@ static void clusttimer_cancel(void)
 		if (ktime_to_us(time_rem) <= 0)
 			return;
 
-		hrtimer_try_to_cancel(&cluster->parent->histtimer);
+		RCU_NONIDLE(hrtimer_try_to_cancel(&cluster->parent->histtimer));
 	}
 }
 
@@ -423,8 +424,8 @@ static void clusttimer_start(struct lpm_cluster *cluster, uint32_t time_us)
 	ktime_t clust_ktime = ns_to_ktime(time_ns);
 
 	cluster->histtimer.function = clusttimer_fn;
-	hrtimer_start(&cluster->histtimer, clust_ktime,
-				HRTIMER_MODE_REL_PINNED);
+	RCU_NONIDLE(hrtimer_start(&cluster->histtimer, clust_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static void msm_pm_set_timer(uint32_t modified_time_us)
@@ -433,7 +434,9 @@ static void msm_pm_set_timer(uint32_t modified_time_us)
 	ktime_t modified_ktime = ns_to_ktime(modified_time_ns);
 
 	lpm_hrtimer.function = lpm_hrtimer_cb;
-	hrtimer_start(&lpm_hrtimer, modified_ktime, HRTIMER_MODE_REL_PINNED);
+	/* idle path: RCU is not watching here on 4.9 (hrtimer tracepoints) */
+	RCU_NONIDLE(hrtimer_start(&lpm_hrtimer, modified_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static uint64_t lpm_cpuidle_predict(struct cpuidle_device *dev,
