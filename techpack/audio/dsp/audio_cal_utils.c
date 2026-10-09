@@ -432,7 +432,29 @@ done:
 }
 EXPORT_SYMBOL(cal_utils_create_cal_types);
 
-static void delete_cal_block(struct cal_block_data *cal_block)
+/*
+ * Importing and releasing an ION buffer maps/unmaps it in the ADSP SMMU,
+ * which can power the SMMU on and take the clk framework's prepare_lock.
+ * Audio clocks send AFE commands from their prepare callbacks (prepare_lock
+ * -> afe_cmd_lock), and AFE takes cal type locks under afe_cmd_lock, so
+ * none of that may happen under cal_type->lock: blocks are imported before
+ * the lock is taken, and their buffers are released after it is dropped.
+ */
+struct cal_ion_buf {
+	struct ion_client *client;
+	struct ion_handle *handle;
+};
+
+static void cal_ion_buf_free(struct cal_ion_buf *buf)
+{
+	if (buf->client != NULL)
+		msm_audio_ion_free(buf->client, buf->handle);
+	buf->client = NULL;
+	buf->handle = NULL;
+}
+
+static void delete_cal_block(struct cal_block_data *cal_block,
+			     struct cal_ion_buf *buf)
 {
 	pr_debug("%s\n", __func__);
 
@@ -444,12 +466,11 @@ static void delete_cal_block(struct cal_block_data *cal_block)
 	cal_block->client_info = NULL;
 	kfree(cal_block->cal_info);
 	cal_block->cal_info = NULL;
-	if (cal_block->map_data.ion_client  != NULL) {
-		msm_audio_ion_free(cal_block->map_data.ion_client,
-			cal_block->map_data.ion_handle);
-		cal_block->map_data.ion_client = NULL;
-		cal_block->map_data.ion_handle = NULL;
-	}
+	/* released by the caller, outside the cal locks */
+	buf->client = cal_block->map_data.ion_client;
+	buf->handle = cal_block->map_data.ion_handle;
+	cal_block->map_data.ion_client = NULL;
+	cal_block->map_data.ion_handle = NULL;
 	kfree(cal_block);
 done:
 	return;
@@ -460,22 +481,35 @@ static void destroy_all_cal_blocks(struct cal_type_data *cal_type)
 	int ret = 0;
 	struct list_head *ptr, *next;
 	struct cal_block_data *cal_block;
+	struct cal_ion_buf buf;
 
-	list_for_each_safe(ptr, next,
-		&cal_type->cal_blocks) {
+	for (;;) {
+		buf.client = NULL;
+		buf.handle = NULL;
+		mutex_lock(&cal_type->lock);
+		list_for_each_safe(ptr, next,
+			&cal_type->cal_blocks) {
 
-		cal_block = list_entry(ptr,
-			struct cal_block_data, list);
+			cal_block = list_entry(ptr,
+				struct cal_block_data, list);
 
-		ret = unmap_memory(cal_type, cal_block);
-		if (ret < 0) {
-			pr_err("%s: unmap_memory failed, cal type %d, ret = %d!\n",
-				__func__,
-			       cal_type->info.reg.cal_type,
-				ret);
+			ret = unmap_memory(cal_type, cal_block);
+			if (ret < 0) {
+				pr_err("%s: unmap_memory failed, cal type %d, ret = %d!\n",
+					__func__,
+				       cal_type->info.reg.cal_type,
+					ret);
+			}
+			delete_cal_block(cal_block, &buf);
+			cal_block = NULL;
+			/* release this block's buffer outside the lock */
+			if (buf.client != NULL)
+				break;
 		}
-		delete_cal_block(cal_block);
-		cal_block = NULL;
+		mutex_unlock(&cal_type->lock);
+		if (buf.client == NULL)
+			break;
+		cal_ion_buf_free(&buf);
 	}
 }
 
@@ -587,6 +621,20 @@ static struct cal_block_data *get_matching_cal_block(
 	return NULL;
 }
 
+/* move an import done outside the lock (see delete_cal_block) into a block */
+static void cal_block_take_import(struct cal_block_data *cal_block,
+				  struct cal_block_data *imp)
+{
+	cal_block->map_data.ion_map_handle = imp->map_data.ion_map_handle;
+	cal_block->map_data.ion_client = imp->map_data.ion_client;
+	cal_block->map_data.ion_handle = imp->map_data.ion_handle;
+	cal_block->map_data.map_size = imp->map_data.map_size;
+	cal_block->cal_data.paddr = imp->cal_data.paddr;
+	cal_block->cal_data.kvaddr = imp->cal_data.kvaddr;
+	imp->map_data.ion_client = NULL;
+	imp->map_data.ion_handle = NULL;
+}
+
 static int cal_block_ion_alloc(struct cal_block_data *cal_block)
 {
 	int	ret = 0;
@@ -617,7 +665,8 @@ done:
 
 static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 				struct audio_cal_type_basic *basic_cal,
-				size_t client_info_size, void *client_info)
+				size_t client_info_size, void *client_info,
+				struct cal_block_data *imp)
 {
 	struct cal_block_data	*cal_block = NULL;
 
@@ -638,9 +687,10 @@ static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 
 	cal_block->map_data.ion_map_handle = basic_cal->cal_data.mem_handle;
 	if (basic_cal->cal_data.mem_handle > 0) {
-		if (cal_block_ion_alloc(cal_block)) {
-			pr_err("%s: cal_block_ion_alloc failed!\n",
-				__func__);
+		/* imported by the caller before taking cal_type->lock */
+		if (imp == NULL || imp->map_data.ion_client == NULL) {
+			pr_err("%s: no imported buffer for handle %d!\n",
+				__func__, basic_cal->cal_data.mem_handle);
 			goto err;
 		}
 	}
@@ -665,6 +715,8 @@ static struct cal_block_data *create_cal_block(struct cal_type_data *cal_type,
 			__func__);
 		goto err;
 	}
+	if (basic_cal->cal_data.mem_handle > 0)
+		cal_block_take_import(cal_block, imp);
 	cal_block->buffer_number = basic_cal->cal_hdr.buffer_number;
 	list_add_tail(&cal_block->list, &cal_type->cal_blocks);
 	pr_debug("%s: created block for cal type %d, buf num %d, map handle %d, map size %zd paddr 0x%pK!\n",
@@ -724,23 +776,6 @@ done:
 }
 
 
-
-static int realloc_memory(struct cal_block_data *cal_block)
-{
-	int ret = 0;
-
-	msm_audio_ion_free(cal_block->map_data.ion_client,
-		cal_block->map_data.ion_handle);
-	cal_block->map_data.ion_client = NULL;
-	cal_block->map_data.ion_handle = NULL;
-	cal_block->cal_data.size = 0;
-
-	ret = cal_block_ion_alloc(cal_block);
-	if (ret < 0)
-		pr_err("%s: realloc_memory failed!\n",
-			__func__);
-	return ret;
-}
 
 static int map_memory(struct cal_type_data *cal_type,
 			struct cal_block_data *cal_block)
@@ -814,8 +849,13 @@ int cal_utils_alloc_cal(size_t data_size, void *data,
 	int ret = 0;
 	struct cal_block_data *cal_block;
 	struct audio_cal_type_alloc *alloc_data = data;
+	struct cal_block_data imp;
+	struct cal_ion_buf old_buf = { NULL, NULL };
+	struct cal_ion_buf imp_buf;
 
 	pr_debug("%s\n", __func__);
+
+	memset(&imp, 0, sizeof(imp));
 
 	if (cal_type == NULL) {
 		pr_err("%s: cal_type is NULL!\n",
@@ -844,6 +884,14 @@ int cal_utils_alloc_cal(size_t data_size, void *data,
 		goto done;
 	}
 
+	/* import before taking cal_type->lock (see delete_cal_block) */
+	imp.map_data.ion_map_handle = alloc_data->cal_data.mem_handle;
+	if (alloc_data->cal_data.mem_handle > 0) {
+		ret = cal_block_ion_alloc(&imp);
+		if (ret < 0)
+			goto done;
+	}
+
 	mutex_lock(&cal_type->lock);
 
 	cal_block = get_matching_cal_block(cal_type,
@@ -852,13 +900,21 @@ int cal_utils_alloc_cal(size_t data_size, void *data,
 		ret = unmap_memory(cal_type, cal_block);
 		if (ret < 0)
 			goto err;
-		ret = realloc_memory(cal_block);
-		if (ret < 0)
-			goto err;
+		/*
+		 * Reallocation: swap in the buffer just imported from this
+		 * request's handle (the old code re-imported the block's previous
+		 * handle); the old buffer is released after the lock.
+		 */
+		old_buf.client = cal_block->map_data.ion_client;
+		old_buf.handle = cal_block->map_data.ion_handle;
+		cal_block->map_data.ion_client = NULL;
+		cal_block->map_data.ion_handle = NULL;
+		cal_block->cal_data.size = 0;
+		cal_block_take_import(cal_block, &imp);
 	} else {
 		cal_block = create_cal_block(cal_type,
 			(struct audio_cal_type_basic *)alloc_data,
-			client_info_size, client_info);
+			client_info_size, client_info, &imp);
 		if (cal_block == NULL) {
 			pr_err("%s: create_cal_block failed for %d!\n",
 				__func__, alloc_data->cal_data.mem_handle);
@@ -872,6 +928,11 @@ int cal_utils_alloc_cal(size_t data_size, void *data,
 		goto err;
 err:
 	mutex_unlock(&cal_type->lock);
+	/* outside the lock: the replaced buffer, and an import not consumed */
+	cal_ion_buf_free(&old_buf);
+	imp_buf.client = imp.map_data.ion_client;
+	imp_buf.handle = imp.map_data.ion_handle;
+	cal_ion_buf_free(&imp_buf);
 done:
 	return ret;
 }
@@ -892,6 +953,7 @@ int cal_utils_dealloc_cal(size_t data_size, void *data,
 	int ret = 0;
 	struct cal_block_data *cal_block;
 	struct audio_cal_type_dealloc *dealloc_data = data;
+	struct cal_ion_buf buf = { NULL, NULL };
 
 	pr_debug("%s\n", __func__);
 
@@ -940,10 +1002,11 @@ int cal_utils_dealloc_cal(size_t data_size, void *data,
 		goto err;
 
 	mutex_lock(&cal_lock);
-	delete_cal_block(cal_block);
+	delete_cal_block(cal_block, &buf);
 	mutex_unlock(&cal_lock);
 err:
 	mutex_unlock(&cal_type->lock);
+	cal_ion_buf_free(&buf);
 done:
 	return ret;
 }
@@ -1007,7 +1070,7 @@ int cal_utils_set_cal(size_t data_size, void *data,
 			cal_block = create_cal_block(
 				cal_type,
 				basic_data,
-				client_info_size, client_info);
+				client_info_size, client_info, NULL);
 			if (cal_block == NULL) {
 				pr_err("%s: create_cal_block failed for cal type %d!\n",
 					__func__,
