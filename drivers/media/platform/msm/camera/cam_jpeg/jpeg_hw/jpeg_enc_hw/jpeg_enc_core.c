@@ -247,6 +247,7 @@ irqreturn_t cam_jpeg_enc_irq(int irq_num, void *data)
 int cam_jpeg_enc_reset_hw(void *data,
 	void *start_args, uint32_t arg_size)
 {
+	unsigned long hw_flags; /* hw_lock is also taken in cam_jpeg_enc_irq */
 	struct cam_hw_info *jpeg_enc_dev = data;
 	struct cam_jpeg_enc_device_core_info *core_info = NULL;
 	struct cam_hw_soc_info *soc_info = NULL;
@@ -266,17 +267,17 @@ int cam_jpeg_enc_reset_hw(void *data,
 	mem_base = soc_info->reg_map[0].mem_base;
 
 	mutex_lock(&core_info->core_mutex);
-	spin_lock(&jpeg_enc_dev->hw_lock);
+	spin_lock_irqsave(&jpeg_enc_dev->hw_lock, hw_flags);
 	if (core_info->core_state == CAM_JPEG_ENC_CORE_RESETTING) {
 		CAM_ERR(CAM_JPEG, "alrady resetting");
-		spin_unlock(&jpeg_enc_dev->hw_lock);
+		spin_unlock_irqrestore(&jpeg_enc_dev->hw_lock, hw_flags);
 		mutex_unlock(&core_info->core_mutex);
 		return 0;
 	}
 
 	reinit_completion(&jpeg_enc_dev->hw_complete);
 	core_info->core_state = CAM_JPEG_ENC_CORE_RESETTING;
-	spin_unlock(&jpeg_enc_dev->hw_lock);
+	spin_unlock_irqrestore(&jpeg_enc_dev->hw_lock, hw_flags);
 
 	cam_io_w_mb(hw_info->reg_val.int_mask_disable_all,
 		mem_base + hw_info->reg_offset.int_mask);
@@ -332,6 +333,7 @@ int cam_jpeg_enc_start_hw(void *data,
 int cam_jpeg_enc_stop_hw(void *data,
 	void *stop_args, uint32_t arg_size)
 {
+	unsigned long hw_flags; /* hw_lock is also taken in cam_jpeg_enc_irq */
 	struct cam_hw_info *jpeg_enc_dev = data;
 	struct cam_jpeg_enc_device_core_info *core_info = NULL;
 	struct cam_hw_soc_info *soc_info = NULL;
@@ -350,17 +352,17 @@ int cam_jpeg_enc_stop_hw(void *data,
 	mem_base = soc_info->reg_map[0].mem_base;
 
 	mutex_lock(&core_info->core_mutex);
-	spin_lock(&jpeg_enc_dev->hw_lock);
+	spin_lock_irqsave(&jpeg_enc_dev->hw_lock, hw_flags);
 	if (core_info->core_state == CAM_JPEG_ENC_CORE_ABORTING) {
 		CAM_ERR(CAM_JPEG, "alrady stopping");
-		spin_unlock(&jpeg_enc_dev->hw_lock);
+		spin_unlock_irqrestore(&jpeg_enc_dev->hw_lock, hw_flags);
 		mutex_unlock(&core_info->core_mutex);
 		return 0;
 	}
 
 	reinit_completion(&jpeg_enc_dev->hw_complete);
 	core_info->core_state = CAM_JPEG_ENC_CORE_ABORTING;
-	spin_unlock(&jpeg_enc_dev->hw_lock);
+	spin_unlock_irqrestore(&jpeg_enc_dev->hw_lock, hw_flags);
 
 	cam_io_w_mb(hw_info->reg_val.hw_cmd_stop,
 		mem_base + hw_info->reg_offset.hw_cmd);
