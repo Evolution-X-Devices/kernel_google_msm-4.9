@@ -1096,7 +1096,12 @@ static int __cam_req_mgr_reset_in_q(struct cam_req_mgr_req_data *req)
 		return -EINVAL;
 	}
 
-	mutex_lock(&req->lock);
+	/*
+	 * Only called while tearing the link down (workqueue already
+	 * destroyed, or the link never became READY): no link work can hold
+	 * req.lock here. Separate lockdep subclass (debug variants only).
+	 */
+	mutex_lock_nested(&req->lock, SINGLE_DEPTH_NESTING);
 	memset(in_q->slot, 0,
 		sizeof(struct cam_req_mgr_slot) * in_q->num_slots);
 	in_q->num_slots = 0;
