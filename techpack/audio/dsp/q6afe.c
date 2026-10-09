@@ -7057,17 +7057,11 @@ int afe_alloc_cal(int32_t cal_type, size_t data_size,
 		goto done;
 	}
 
-	/*
-	 * Known lock cycle, not fixed (debug_locking only, no-op without
-	 * LOCKDEP): this holds the cal type's lock and maps the buffer under
-	 * afe_cmd_lock, while __afe_port_start() holds afe_cmd_lock and sends
-	 * the custom topology under its cal type's lock. Keep lockdep off for
-	 * this call so it can keep checking the rest of the system.
-	 */
-	lockdep_off();
+	/* lock order afe_cmd_lock -> cal type lock, as in __afe_port_start() */
+	mutex_lock(&this_afe.afe_cmd_lock);
 	ret = cal_utils_alloc_cal(data_size, data,
 		this_afe.cal_data[cal_index], 0, NULL);
-	lockdep_on();
+	mutex_unlock(&this_afe.afe_cmd_lock);
 	if (ret < 0) {
 		pr_err("%s: cal_utils_alloc_block failed, ret = %d, cal type = %d!\n",
 			__func__, ret, cal_type);
@@ -7122,8 +7116,11 @@ static int afe_set_cal(int32_t cal_type, size_t data_size,
 		goto done;
 	}
 
+	/* maps memory via afe_map_cal_data(): same lock order as alloc */
+	mutex_lock(&this_afe.afe_cmd_lock);
 	ret = cal_utils_set_cal(data_size, data,
 		this_afe.cal_data[cal_index], 0, NULL);
+	mutex_unlock(&this_afe.afe_cmd_lock);
 	if (ret < 0) {
 		pr_err("%s: cal_utils_set_cal failed, ret = %d, cal type = %d!\n",
 			__func__, ret, cal_type);
@@ -7457,8 +7454,7 @@ static int afe_map_cal_data(int32_t cal_type,
 		goto done;
 	}
 
-
-	mutex_lock(&this_afe.afe_cmd_lock);
+	/* caller holds afe_cmd_lock (afe_alloc_cal / afe_set_cal) */
 	atomic_set(&this_afe.mem_map_cal_index, cal_index);
 	ret = afe_cmd_memory_map(cal_block->cal_data.paddr,
 			cal_block->map_data.map_size);
@@ -7471,12 +7467,10 @@ static int afe_map_cal_data(int32_t cal_type,
 			__func__,
 			&cal_block->cal_data.paddr,
 			cal_block->map_data.map_size);
-		mutex_unlock(&this_afe.afe_cmd_lock);
 		goto done;
 	}
 	cal_block->map_data.q6map_handle = atomic_read(&this_afe.
 		mem_map_cal_handles[cal_index]);
-	mutex_unlock(&this_afe.afe_cmd_lock);
 done:
 	return ret;
 }
