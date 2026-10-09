@@ -369,25 +369,27 @@ static struct rr_packet *glink_xprt_copy_data(struct read_work *rx_work)
 
 static void glink_xprt_read_data(struct kthread_work *work)
 {
-	struct rr_packet *pkt;
+	struct rr_packet *pkt = NULL;
 	struct read_work *rx_work =
 		container_of(work, struct read_work, kwork);
 	struct ipc_router_glink_xprt *glink_xprtp = rx_work->glink_xprtp;
 	bool reuse_intent = false;
 
 	/*
-	 * Lockdep sees ss_reset_rwlock -> routing_table_lock here (rx ->
-	 * xprt_notify) and routing_table_lock -> tx_lock -> ss_reset_rwlock on
-	 * send. All are read locks: it can only deadlock with a writer queued
-	 * (subsystem reset) at the same moment. Known, not fixed (legacy IPC
-	 * router); separate subclass so it doesn't turn lockdep off (debug
-	 * variants); same as down_read() without LOCKDEP.
+	 * ss_reset_rwlock only covers the GLINK channel use (the ss_reset
+	 * check, copying out of the rx intent, glink_rx_done()). The packet
+	 * is handed to the router after dropping it: notify takes
+	 * routing_table_lock, and senders take ss_reset_rwlock under
+	 * routing_table_lock, which deadlocks once an SSR (ss_reset_rwlock
+	 * writer) and a route update are queued. Data, open and close events
+	 * all run on this xprt's single kworker, so the delivery can't race
+	 * the close notification.
 	 */
-	down_read_nested(&glink_xprtp->ss_reset_rwlock, SINGLE_DEPTH_NESTING);
+	down_read(&glink_xprtp->ss_reset_rwlock);
 	if (glink_xprtp->ss_reset) {
 		IPC_RTR_ERR("%s: %s channel reset\n",
 			__func__, glink_xprtp->xprt.name);
-		goto out_read_data;
+		goto out_rx_done;
 	}
 
 	D("%s %zu bytes @ %p\n", __func__, rx_work->iovec_size, rx_work->iovec);
@@ -395,18 +397,18 @@ static void glink_xprt_read_data(struct kthread_work *work)
 		reuse_intent = true;
 
 	pkt = glink_xprt_copy_data(rx_work);
-	if (!pkt) {
+	if (!pkt)
 		IPC_RTR_ERR("%s: Error copying data\n", __func__);
-		goto out_read_data;
-	}
-
-	msm_ipc_router_xprt_notify(&glink_xprtp->xprt,
-				   IPC_ROUTER_XPRT_EVENT_DATA, pkt);
-	release_pkt(pkt);
-out_read_data:
+out_rx_done:
 	glink_rx_done(glink_xprtp->ch_hndl, rx_work->iovec, reuse_intent);
-	kfree(rx_work);
 	up_read(&glink_xprtp->ss_reset_rwlock);
+
+	if (pkt) {
+		msm_ipc_router_xprt_notify(&glink_xprtp->xprt,
+					   IPC_ROUTER_XPRT_EVENT_DATA, pkt);
+		release_pkt(pkt);
+	}
+	kfree(rx_work);
 	__pm_relax(&glink_xprtp->notify_rxv_ws);
 }
 
