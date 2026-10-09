@@ -2359,7 +2359,14 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 	root_dev.session_hdl = link_info->session_hdl;
 	root_dev.priv = (void *)link;
 
-	mutex_lock(&link->lock);
+	/*
+	 * Devices are queried for their info (ctx_mutex) under the new link's
+	 * lock; config_dev adds requests to a context's link (link lock) under
+	 * ctx_mutex. A context is only attached to this link inside this
+	 * section, so both can't meet on one link; all links share one lock
+	 * class. Separate subclass here (debug variants; no-op otherwise).
+	 */
+	mutex_lock_nested(&link->lock, SINGLE_DEPTH_NESTING);
 	/* Create unique dev handle for link */
 	link->link_hdl = cam_create_device_hdl(&root_dev);
 	if (link->link_hdl < 0) {
