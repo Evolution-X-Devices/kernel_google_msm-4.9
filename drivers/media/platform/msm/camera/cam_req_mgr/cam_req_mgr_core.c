@@ -2696,6 +2696,14 @@ int cam_req_mgr_link_control(struct cam_req_mgr_link_control *control)
 			break;
 		}
 
+		if (control->ops != CAM_REQ_MGR_LINK_ACTIVATE &&
+			control->ops != CAM_REQ_MGR_LINK_DEACTIVATE) {
+			CAM_ERR(CAM_CRM, "Invalid link control command");
+			rc = -EINVAL;
+			continue;
+		}
+
+		/* link->lock only covers the SOF watchdog */
 		mutex_lock(&link->lock);
 		if (control->ops == CAM_REQ_MGR_LINK_ACTIVATE) {
 			/* Start SOF watchdog timer */
@@ -2708,36 +2716,32 @@ int cam_req_mgr_link_control(struct cam_req_mgr_link_control *control)
 					link->link_hdl);
 				rc = -EFAULT;
 			}
-			/* notify nodes */
-			for (j = 0; j < link->num_devs; j++) {
-				dev = &link->l_dev[j];
-				evt_data.evt_type = CAM_REQ_MGR_LINK_EVT_RESUME;
-				evt_data.link_hdl =  link->link_hdl;
-				evt_data.dev_hdl = dev->dev_hdl;
-				evt_data.req_id = 0;
-				if (dev->ops && dev->ops->process_evt)
-					dev->ops->process_evt(&evt_data);
-			}
-		} else if (control->ops == CAM_REQ_MGR_LINK_DEACTIVATE) {
+		} else {
 			/* Destroy SOF watchdog timer */
 			spin_lock_bh(&link->link_state_spin_lock);
 			crm_timer_exit(&link->watchdog);
 			spin_unlock_bh(&link->link_state_spin_lock);
-			/* notify nodes */
-			for (j = 0; j < link->num_devs; j++) {
-				dev = &link->l_dev[j];
-				evt_data.evt_type = CAM_REQ_MGR_LINK_EVT_PAUSE;
-				evt_data.link_hdl =  link->link_hdl;
-				evt_data.dev_hdl = dev->dev_hdl;
-				evt_data.req_id = 0;
-				if (dev->ops && dev->ops->process_evt)
-					dev->ops->process_evt(&evt_data);
-			}
-		} else {
-			CAM_ERR(CAM_CRM, "Invalid link control command");
-			rc = -EINVAL;
 		}
 		mutex_unlock(&link->lock);
+
+		/*
+		 * Notify nodes without link->lock: devices take their own mutexes
+		 * here and add requests to this link (link->lock) under those
+		 * mutexes. The device list can't change under crm_lock (link
+		 * setup, unlink and session destroy all hold it).
+		 */
+		for (j = 0; j < link->num_devs; j++) {
+			dev = &link->l_dev[j];
+			evt_data.evt_type =
+				(control->ops == CAM_REQ_MGR_LINK_ACTIVATE) ?
+				CAM_REQ_MGR_LINK_EVT_RESUME :
+				CAM_REQ_MGR_LINK_EVT_PAUSE;
+			evt_data.link_hdl =  link->link_hdl;
+			evt_data.dev_hdl = dev->dev_hdl;
+			evt_data.req_id = 0;
+			if (dev->ops && dev->ops->process_evt)
+				dev->ops->process_evt(&evt_data);
+		}
 	}
 	mutex_unlock(&g_crm_core_dev->crm_lock);
 end:
