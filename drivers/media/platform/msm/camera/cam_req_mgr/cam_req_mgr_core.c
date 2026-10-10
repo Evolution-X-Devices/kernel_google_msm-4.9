@@ -1188,15 +1188,12 @@ static void __cam_req_mgr_destroy_subdev(
 	l_device = NULL;
 }
 
-/**
- * __cam_req_mgr_destroy_link_info()
- *
- * @brief    : Cleans up the mem allocated while linking
- * @link     : pointer to link, mem associated with this link is freed
- *
- * @return   : returns if unlink for any device was success or failure
+/*
+ * Unlink the devices through their ops. Devices take their context mutex
+ * here, and their config_dev ioctl takes link->lock (cam_req_mgr_cb_add_req)
+ * under it, so call this without link->lock.
  */
-static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
+static int __cam_req_mgr_disconnect_link(struct cam_req_mgr_core_link *link)
 {
 	int32_t                                 i = 0;
 	struct cam_req_mgr_connected_device    *dev;
@@ -1225,6 +1222,18 @@ static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
 			dev->ops = NULL;
 		}
 	}
+
+	return rc;
+}
+
+/**
+ * __cam_req_mgr_destroy_link_info()
+ *
+ * @brief    : Cleans up the mem allocated while linking
+ * @link     : pointer to link, mem associated with this link is freed
+ */
+static void __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
+{
 	__cam_req_mgr_destroy_all_tbl(&link->req.l_tbl);
 	__cam_req_mgr_reset_in_q(&link->req);
 	link->req.num_tbl = 0;
@@ -1233,8 +1242,6 @@ static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
 	link->pd_mask = 0;
 	link->num_devs = 0;
 	link->max_delay = 0;
-
-	return rc;
 }
 
 /**
@@ -2171,6 +2178,7 @@ static int __cam_req_mgr_setup_link_info(struct cam_req_mgr_core_link *link,
 	return 0;
 
 error:
+	__cam_req_mgr_disconnect_link(link);
 	__cam_req_mgr_destroy_link_info(link);
 	return rc;
 }
@@ -2263,12 +2271,15 @@ static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 	 */
 	__cam_req_mgr_print_req_tbl(&link->req);
 
-	mutex_lock(&link->lock);
-	/* Cleanup request tables and unlink devices */
-	rc = __cam_req_mgr_destroy_link_info(link);
+	/* Unlink devices, without link->lock (see disconnect_link) */
+	rc = __cam_req_mgr_disconnect_link(link);
 	if (rc)
 		CAM_ERR(CAM_CORE,
 			"Unlink for all devices was not successful");
+
+	mutex_lock(&link->lock);
+	/* Cleanup request tables */
+	__cam_req_mgr_destroy_link_info(link);
 
 	/* Free memory holding data of linked devs */
 	__cam_req_mgr_destroy_subdev(link->l_dev);
@@ -2423,6 +2434,7 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 		&link->workq, CRM_WORKQ_USAGE_NON_IRQ);
 	if (rc < 0) {
 		CAM_ERR(CAM_CRM, "FATAL: unable to create worker");
+		__cam_req_mgr_disconnect_link(link);
 		__cam_req_mgr_destroy_link_info(link);
 		goto setup_failed;
 	}
@@ -2430,6 +2442,7 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 	/* Assign payload to workqueue tasks */
 	rc = __cam_req_mgr_setup_payload(link->workq);
 	if (rc < 0) {
+		__cam_req_mgr_disconnect_link(link);
 		__cam_req_mgr_destroy_link_info(link);
 		cam_req_mgr_workq_destroy(&link->workq);
 		goto setup_failed;
