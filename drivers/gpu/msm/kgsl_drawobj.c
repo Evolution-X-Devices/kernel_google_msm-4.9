@@ -180,7 +180,11 @@ static bool drawobj_sync_expire(struct kgsl_device *device,
 	 * for dispatch
 	 */
 	if (!kgsl_drawobj_events_pending(event->syncobj)) {
-		del_timer_sync(&syncobj->timer);
+		/*
+		 * Not del_timer_sync(): this runs from fence callbacks, which can
+		 * be in hard IRQ context (fence-array irq_work).
+		 */
+		del_timer(&syncobj->timer);
 
 		if (device->ftbl->drawctxt_sched)
 			device->ftbl->drawctxt_sched(device,
