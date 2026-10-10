@@ -524,6 +524,9 @@ ifneq ($(GCC_TOOLCHAIN),)
 CLANG_FLAGS	+= --gcc-toolchain=$(GCC_TOOLCHAIN)
 endif
 CLANG_FLAGS	+= -no-integrated-as
+# Newer clang output that GNU as (binutils 2.27) can't parse: DWARF 5 and
+# the two-string '.file N "dir" "file"' form, and .addrsig sections.
+CLANG_FLAGS	+= -fdebug-default-version=4 -fno-dwarf-directory-asm -fno-addrsig
 CLANG_FLAGS	+= -Werror=unknown-warning-option
 KBUILD_CFLAGS	+= $(CLANG_FLAGS)
 KBUILD_AFLAGS	+= $(CLANG_FLAGS)
