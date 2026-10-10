@@ -2240,7 +2240,6 @@ static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 	/* Destroy timer of link */
 	crm_timer_exit(&link->watchdog);
 	spin_unlock_bh(&link->link_state_spin_lock);
-	__cam_req_mgr_print_req_tbl(&link->req);
 	payload = link->workq->task.pool[0].payload;
 
 	/*
@@ -2256,6 +2255,13 @@ static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 	/* Destroy workq of link, then its payload data (no worker left) */
 	cam_req_mgr_workq_destroy(&link->workq);
 	kfree(payload);
+
+	/*
+	 * Takes req.lock: not under link->lock, link work holds req.lock while
+	 * it takes session/context mutexes, under which add_req takes
+	 * link->lock.
+	 */
+	__cam_req_mgr_print_req_tbl(&link->req);
 
 	mutex_lock(&link->lock);
 	/* Cleanup request tables and unlink devices */
