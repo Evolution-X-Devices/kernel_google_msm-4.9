@@ -129,15 +129,6 @@ static const struct nla_policy compat_policy[XFRMA_MAX+1] = {
 	[XFRMA_IF_ID]		= { .type = NLA_U32 },
 };
 
-static inline void *kvmalloc(size_t size, gfp_t flags)
-{
-	void *ret;
-
-	ret = kmalloc(size, flags | __GFP_NOWARN);
-	if (!ret)
-		ret = __vmalloc(size, flags, PAGE_KERNEL);
-	return ret;
-}
 
 static struct nlmsghdr *xfrm_nlmsg_put_compat(struct sk_buff *skb,
 			const struct nlmsghdr *nlh_src, u16 type)
