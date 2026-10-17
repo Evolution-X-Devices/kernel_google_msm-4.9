@@ -111,6 +111,10 @@ else
 KBUILD_CPPFLAGS	+= -mlittle-endian
 AS		+= -EL
 LD		+= -EL
+# ld.lld needs the emulation when an "ld -r" has no ELF input (non-LTO builds
+# link directories whose built-ins are all empty archives). From upstream
+# 3d6a7b99e3fa ("arm64: ensure the kernel is compiled for LP64").
+LDFLAGS		+= -maarch64linux
 UTS_MACHINE	:= aarch64
 endif
 
