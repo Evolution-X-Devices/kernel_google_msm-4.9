@@ -691,7 +691,7 @@ static int dccp_v6_rcv(struct sk_buff *skb)
 		DCCP_SKB_CB(skb)->dccpd_ack_seq = dccp_hdr_ack_seq(skb);
 
 lookup:
-	ssk = __inet6_lookup_skb(&dccp_hashinfo, skb, __dccp_hdr_len(dh),
+	sk = __inet6_lookup_skb(&dccp_hashinfo, skb, __dccp_hdr_len(dh),
 			        dh->dccph_sport, dh->dccph_dport,
 				inet6_iif(skb), 0,&refcounted);
 	if (!sk) {
