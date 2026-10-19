@@ -161,6 +161,7 @@ IF_HAVE_PG_IDLE(PG_idle,		"idle"		)
 	{VM_ACCOUNT,			"account"	},		\
 	{VM_NORESERVE,			"noreserve"	},		\
 	{VM_HUGETLB,			"hugetlb"	},		\
+	{VM_WIPEONFORK,			"wipeonfork"	},		\
 	__VM_ARCH_SPECIFIC_1				,		\
 	__VM_ARCH_SPECIFIC_2				,		\
 	{VM_DONTDUMP,			"dontdump"	},		\

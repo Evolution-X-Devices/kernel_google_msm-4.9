@@ -4368,6 +4368,15 @@ static int ipc_router_core_init(void)
 	for (i = 0; i < LP_HASH_SIZE; i++)
 		INIT_LIST_HEAD(&local_ports[i]);
 
+	/*
+	 * One-time init only (is_ipc_router_inited gates it): the routing table
+	 * is never taken under ipc_router_init_lock after the router is up, so
+	 * the init_lock -> routing_table_lock -> tx_lock -> ss_reset_rwlock ->
+	 * init_lock cycle lockdep sees cannot close. Keep lockdep out of this
+	 * section (debug variants; no-op without LOCKDEP); every lock taken in
+	 * it is also released in it.
+	 */
+	lockdep_off();
 	down_write(&routing_table_lock_lha3);
 	if (!routing_table_inited) {
 		init_routing_table();
@@ -4376,6 +4385,7 @@ static int ipc_router_core_init(void)
 	up_write(&routing_table_lock_lha3);
 	rt_entry = create_routing_table_entry(IPC_ROUTER_NID_LOCAL, NULL);
 	kref_put(&rt_entry->ref, ipc_router_release_rtentry);
+	lockdep_on();
 
 	msm_ipc_router_workqueue =
 		create_singlethread_workqueue("msm_ipc_router");

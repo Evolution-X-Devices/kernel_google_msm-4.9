@@ -6,6 +6,8 @@
 
 ifeq ($(cc-name),clang)
   CC_ARM32 := $(CC) $(CLANG_TARGET_ARM32) -no-integrated-as $(CLANG_GCC32_TC) $(CLANG_PREFIX32)
+  # keep the output GNU-as (binutils 2.27) compatible, as in the top Makefile
+  CC_ARM32 += -fdebug-default-version=4 -fno-dwarf-directory-asm -fno-addrsig
   GCC_ARM32_TC := $(realpath $(dir $(shell which $(CROSS_COMPILE_ARM32)ld))/..)
 ifneq ($(GCC_ARM32_TC),)
   CC_ARM32 += --gcc-toolchain=$(GCC_ARM32_TC)

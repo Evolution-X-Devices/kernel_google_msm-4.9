@@ -255,6 +255,7 @@ source "drivers/base/regmap/Kconfig"
 
 config DMA_SHARED_BUFFER
 	bool
+	select IRQ_WORK
 	default n
 	help
 	  This option enables the framework for buffer-sharing between

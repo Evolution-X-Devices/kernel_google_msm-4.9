@@ -46,8 +46,8 @@
 /* all clang versions usable with the kernel support KASAN ABI version 5 */
 #define KASAN_ABI_VERSION 5
 
-/* emulate gcc's __SANITIZE_ADDRESS__ flag */
-#if __has_feature(address_sanitizer)
+/* emulate gcc's __SANITIZE_ADDRESS__ flag (newer clang defines it itself) */
+#if __has_feature(address_sanitizer) && !defined(__SANITIZE_ADDRESS__)
 #define __SANITIZE_ADDRESS__
 #endif
 

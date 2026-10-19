@@ -524,6 +524,9 @@ ifneq ($(GCC_TOOLCHAIN),)
 CLANG_FLAGS	+= --gcc-toolchain=$(GCC_TOOLCHAIN)
 endif
 CLANG_FLAGS	+= -no-integrated-as
+# Newer clang output that GNU as (binutils 2.27) can't parse: DWARF 5 and
+# the two-string '.file N "dir" "file"' form, and .addrsig sections.
+CLANG_FLAGS	+= -fdebug-default-version=4 -fno-dwarf-directory-asm -fno-addrsig
 CLANG_FLAGS	+= -Werror=unknown-warning-option
 KBUILD_CFLAGS	+= $(CLANG_FLAGS)
 KBUILD_AFLAGS	+= $(CLANG_FLAGS)
@@ -642,12 +645,14 @@ all: vmlinux
 # Make toolchain changes before including arch/$(SRCARCH)/Makefile to ensure
 # ar/cc/ld-* macros return correct values.
 ifdef CONFIG_LTO_CLANG
+ifneq ($(ld-name),lld)
 # use GNU gold with LLVMgold for LTO linking, and LD for vmlinux_link
 LDFINAL_vmlinux := $(LD)
 LD		:= $(LDGOLD)
 LDFLAGS		+= -plugin LLVMgold.so
 LDFLAGS		+= -plugin-opt=-function-sections
 LDFLAGS		+= -plugin-opt=-data-sections
+endif
 # use llvm-ar for building symbol tables from IR files, and llvm-dis instead
 # of objdump for processing symbol versions and exports
 LLVM_AR		:= llvm-ar
@@ -686,6 +691,10 @@ endif
 ifdef CONFIG_LTO_CLANG
 lto-clang-flags	:= -flto -fvisibility=hidden
 
+# merge module sections (51042de0309f; 4.9 passes module linker scripts
+# through KBUILD_LDFLAGS_MODULE rather than KBUILD_LDS_MODULE)
+KBUILD_LDFLAGS_MODULE += -T scripts/module-lto.lds
+
 # allow disabling only clang LTO where needed
 DISABLE_LTO_CLANG := -fno-lto -fvisibility=default
 export DISABLE_LTO_CLANG
@@ -704,7 +713,7 @@ export LDFINAL_vmlinux LDFLAGS_FINAL_vmlinux
 endif
 
 ifdef CONFIG_CFI_CLANG
-cfi-clang-flags	+= -fsanitize=cfi $(call cc-option, -fsplit-lto-unit) -fno-sanitize-blacklist
+cfi-clang-flags	+= -fsanitize=cfi -fno-sanitize-cfi-canonical-jump-tables $(call cc-option, -fsplit-lto-unit) -fno-sanitize-blacklist
 DISABLE_CFI_CLANG := -fno-sanitize=cfi
 ifdef CONFIG_MODULES
 cfi-clang-flags	+= -fsanitize-cfi-cross-dso
@@ -1202,8 +1211,10 @@ ifdef CONFIG_LTO_CLANG
   ifneq ($(call clang-ifversion, -ge, 0500, y), y)
 	@echo Cannot use CONFIG_LTO_CLANG: requires clang 5.0 or later >&2 && exit 1
   endif
-  ifneq ($(call gold-ifversion, -ge, 112000000, y), y)
-	@echo Cannot use CONFIG_LTO_CLANG: requires GNU gold 1.12 or later >&2 && exit 1
+  ifneq ($(ld-name),lld)
+    ifneq ($(call gold-ifversion, -ge, 112000000, y), y)
+         @echo Cannot use CONFIG_LTO_CLANG: requires GNU gold 1.12 or later >&2 && exit 1
+    endif
   endif
 endif
 # Make sure compiler supports LTO flags

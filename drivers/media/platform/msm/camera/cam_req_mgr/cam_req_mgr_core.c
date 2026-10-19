@@ -1096,7 +1096,12 @@ static int __cam_req_mgr_reset_in_q(struct cam_req_mgr_req_data *req)
 		return -EINVAL;
 	}
 
-	mutex_lock(&req->lock);
+	/*
+	 * Only called while tearing the link down (workqueue already
+	 * destroyed, or the link never became READY): no link work can hold
+	 * req.lock here. Separate lockdep subclass (debug variants only).
+	 */
+	mutex_lock_nested(&req->lock, SINGLE_DEPTH_NESTING);
 	memset(in_q->slot, 0,
 		sizeof(struct cam_req_mgr_slot) * in_q->num_slots);
 	in_q->num_slots = 0;
@@ -1183,15 +1188,12 @@ static void __cam_req_mgr_destroy_subdev(
 	l_device = NULL;
 }
 
-/**
- * __cam_req_mgr_destroy_link_info()
- *
- * @brief    : Cleans up the mem allocated while linking
- * @link     : pointer to link, mem associated with this link is freed
- *
- * @return   : returns if unlink for any device was success or failure
+/*
+ * Unlink the devices through their ops. Devices take their context mutex
+ * here, and their config_dev ioctl takes link->lock (cam_req_mgr_cb_add_req)
+ * under it, so call this without link->lock.
  */
-static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
+static int __cam_req_mgr_disconnect_link(struct cam_req_mgr_core_link *link)
 {
 	int32_t                                 i = 0;
 	struct cam_req_mgr_connected_device    *dev;
@@ -1220,6 +1222,18 @@ static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
 			dev->ops = NULL;
 		}
 	}
+
+	return rc;
+}
+
+/**
+ * __cam_req_mgr_destroy_link_info()
+ *
+ * @brief    : Cleans up the mem allocated while linking
+ * @link     : pointer to link, mem associated with this link is freed
+ */
+static void __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
+{
 	__cam_req_mgr_destroy_all_tbl(&link->req.l_tbl);
 	__cam_req_mgr_reset_in_q(&link->req);
 	link->req.num_tbl = 0;
@@ -1228,8 +1242,6 @@ static int __cam_req_mgr_destroy_link_info(struct cam_req_mgr_core_link *link)
 	link->pd_mask = 0;
 	link->num_devs = 0;
 	link->max_delay = 0;
-
-	return rc;
 }
 
 /**
@@ -2166,6 +2178,7 @@ static int __cam_req_mgr_setup_link_info(struct cam_req_mgr_core_link *link,
 	return 0;
 
 error:
+	__cam_req_mgr_disconnect_link(link);
 	__cam_req_mgr_destroy_link_info(link);
 	return rc;
 }
@@ -2226,6 +2239,7 @@ end:
 static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 {
 	int rc;
+	void *payload;
 
 	mutex_lock(&link->lock);
 	spin_lock_bh(&link->link_state_spin_lock);
@@ -2234,20 +2248,38 @@ static int __cam_req_mgr_unlink(struct cam_req_mgr_core_link *link)
 	/* Destroy timer of link */
 	crm_timer_exit(&link->watchdog);
 	spin_unlock_bh(&link->link_state_spin_lock);
+	payload = link->workq->task.pool[0].payload;
+
+	/*
+	 * Don't destroy the workqueue under link->lock: link work takes
+	 * session and device (sensor) mutexes, and devices add requests to
+	 * this link (link->lock) under those mutexes. The link is IDLE now and
+	 * cam_req_mgr_cb_add_req() checks that under link->lock, so dropping
+	 * the lock here waits out an add_req already past the check; later
+	 * ones bail without enqueueing.
+	 */
+	mutex_unlock(&link->lock);
+
+	/* Destroy workq of link, then its payload data (no worker left) */
+	cam_req_mgr_workq_destroy(&link->workq);
+	kfree(payload);
+
+	/*
+	 * Takes req.lock: not under link->lock, link work holds req.lock while
+	 * it takes session/context mutexes, under which add_req takes
+	 * link->lock.
+	 */
 	__cam_req_mgr_print_req_tbl(&link->req);
 
-	/* Destroy workq payload data */
-	kfree(link->workq->task.pool[0].payload);
-	link->workq->task.pool[0].payload = NULL;
-
-	/* Destroy workq of link */
-	cam_req_mgr_workq_destroy(&link->workq);
-
-	/* Cleanup request tables and unlink devices */
-	rc = __cam_req_mgr_destroy_link_info(link);
+	/* Unlink devices, without link->lock (see disconnect_link) */
+	rc = __cam_req_mgr_disconnect_link(link);
 	if (rc)
 		CAM_ERR(CAM_CORE,
 			"Unlink for all devices was not successful");
+
+	mutex_lock(&link->lock);
+	/* Cleanup request tables */
+	__cam_req_mgr_destroy_link_info(link);
 
 	/* Free memory holding data of linked devs */
 	__cam_req_mgr_destroy_subdev(link->l_dev);
@@ -2359,7 +2391,14 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 	root_dev.session_hdl = link_info->session_hdl;
 	root_dev.priv = (void *)link;
 
-	mutex_lock(&link->lock);
+	/*
+	 * Devices are queried for their info (ctx_mutex) under the new link's
+	 * lock; config_dev adds requests to a context's link (link lock) under
+	 * ctx_mutex. A context is only attached to this link inside this
+	 * section, so both can't meet on one link; all links share one lock
+	 * class. Separate subclass here (debug variants; no-op otherwise).
+	 */
+	mutex_lock_nested(&link->lock, SINGLE_DEPTH_NESTING);
 	/* Create unique dev handle for link */
 	link->link_hdl = cam_create_device_hdl(&root_dev);
 	if (link->link_hdl < 0) {
@@ -2395,6 +2434,7 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 		&link->workq, CRM_WORKQ_USAGE_NON_IRQ);
 	if (rc < 0) {
 		CAM_ERR(CAM_CRM, "FATAL: unable to create worker");
+		__cam_req_mgr_disconnect_link(link);
 		__cam_req_mgr_destroy_link_info(link);
 		goto setup_failed;
 	}
@@ -2402,6 +2442,7 @@ int cam_req_mgr_link(struct cam_req_mgr_link_info *link_info)
 	/* Assign payload to workqueue tasks */
 	rc = __cam_req_mgr_setup_payload(link->workq);
 	if (rc < 0) {
+		__cam_req_mgr_disconnect_link(link);
 		__cam_req_mgr_destroy_link_info(link);
 		cam_req_mgr_workq_destroy(&link->workq);
 		goto setup_failed;
@@ -2689,6 +2730,14 @@ int cam_req_mgr_link_control(struct cam_req_mgr_link_control *control)
 			break;
 		}
 
+		if (control->ops != CAM_REQ_MGR_LINK_ACTIVATE &&
+			control->ops != CAM_REQ_MGR_LINK_DEACTIVATE) {
+			CAM_ERR(CAM_CRM, "Invalid link control command");
+			rc = -EINVAL;
+			continue;
+		}
+
+		/* link->lock only covers the SOF watchdog */
 		mutex_lock(&link->lock);
 		if (control->ops == CAM_REQ_MGR_LINK_ACTIVATE) {
 			/* Start SOF watchdog timer */
@@ -2701,36 +2750,32 @@ int cam_req_mgr_link_control(struct cam_req_mgr_link_control *control)
 					link->link_hdl);
 				rc = -EFAULT;
 			}
-			/* notify nodes */
-			for (j = 0; j < link->num_devs; j++) {
-				dev = &link->l_dev[j];
-				evt_data.evt_type = CAM_REQ_MGR_LINK_EVT_RESUME;
-				evt_data.link_hdl =  link->link_hdl;
-				evt_data.dev_hdl = dev->dev_hdl;
-				evt_data.req_id = 0;
-				if (dev->ops && dev->ops->process_evt)
-					dev->ops->process_evt(&evt_data);
-			}
-		} else if (control->ops == CAM_REQ_MGR_LINK_DEACTIVATE) {
+		} else {
 			/* Destroy SOF watchdog timer */
 			spin_lock_bh(&link->link_state_spin_lock);
 			crm_timer_exit(&link->watchdog);
 			spin_unlock_bh(&link->link_state_spin_lock);
-			/* notify nodes */
-			for (j = 0; j < link->num_devs; j++) {
-				dev = &link->l_dev[j];
-				evt_data.evt_type = CAM_REQ_MGR_LINK_EVT_PAUSE;
-				evt_data.link_hdl =  link->link_hdl;
-				evt_data.dev_hdl = dev->dev_hdl;
-				evt_data.req_id = 0;
-				if (dev->ops && dev->ops->process_evt)
-					dev->ops->process_evt(&evt_data);
-			}
-		} else {
-			CAM_ERR(CAM_CRM, "Invalid link control command");
-			rc = -EINVAL;
 		}
 		mutex_unlock(&link->lock);
+
+		/*
+		 * Notify nodes without link->lock: devices take their own mutexes
+		 * here and add requests to this link (link->lock) under those
+		 * mutexes. The device list can't change under crm_lock (link
+		 * setup, unlink and session destroy all hold it).
+		 */
+		for (j = 0; j < link->num_devs; j++) {
+			dev = &link->l_dev[j];
+			evt_data.evt_type =
+				(control->ops == CAM_REQ_MGR_LINK_ACTIVATE) ?
+				CAM_REQ_MGR_LINK_EVT_RESUME :
+				CAM_REQ_MGR_LINK_EVT_PAUSE;
+			evt_data.link_hdl =  link->link_hdl;
+			evt_data.dev_hdl = dev->dev_hdl;
+			evt_data.req_id = 0;
+			if (dev->ops && dev->ops->process_evt)
+				dev->ops->process_evt(&evt_data);
+		}
 	}
 	mutex_unlock(&g_crm_core_dev->crm_lock);
 end:

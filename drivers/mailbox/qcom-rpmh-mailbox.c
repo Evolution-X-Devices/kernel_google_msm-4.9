@@ -149,7 +149,7 @@ struct rsc_drv {
 
 /* Log to IPC and Ftrace */
 #define log_send_msg(drv, m, n, i, a, d, c, t) do {			\
-	trace_rpmh_send_msg(drv->name, drv->addr, m, n, i, a, d, c, t);	\
+	trace_rpmh_send_msg_rcuidle(drv->name, drv->addr, m, n, i, a, d, c, t); \
 	ipc_log_string(drv->ipc_log_ctx,				\
 		"send msg: m=%d n=%d msgid=0x%x addr=0x%x data=0x%x cmpl=%d trigger=%d", \
 		m, n, i, a, d, c, t);					\
@@ -162,7 +162,7 @@ struct rsc_drv {
 	} while (0)
 
 #define log_rpmh_control_msg(drv, d) do {				\
-	trace_rpmh_control_msg(drv->name, d);				\
+	trace_rpmh_control_msg_rcuidle(drv->name, d);			\
 	ipc_log_string(drv->ipc_log_ctx, "ctrlr msg: data=0x%x", d);	\
 	} while (0)
 

@@ -347,7 +347,7 @@ static void histtimer_cancel(void)
 	if (ktime_to_us(time_rem) <= 0)
 		return;
 
-	hrtimer_try_to_cancel(cpu_histtimer);
+	RCU_NONIDLE(hrtimer_try_to_cancel(cpu_histtimer));
 }
 
 static enum hrtimer_restart histtimer_fn(struct hrtimer *h)
@@ -367,7 +367,8 @@ static void histtimer_start(uint32_t time_us)
 	struct hrtimer *cpu_histtimer = &per_cpu(histtimer, cpu);
 
 	cpu_histtimer->function = histtimer_fn;
-	hrtimer_start(cpu_histtimer, hist_ktime, HRTIMER_MODE_REL_PINNED);
+	RCU_NONIDLE(hrtimer_start(cpu_histtimer, hist_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static void cluster_timer_init(struct lpm_cluster *cluster)
@@ -395,7 +396,7 @@ static void clusttimer_cancel(void)
 
 	time_rem = hrtimer_get_remaining(&cluster->histtimer);
 	if (ktime_to_us(time_rem) > 0)
-		hrtimer_try_to_cancel(&cluster->histtimer);
+		RCU_NONIDLE(hrtimer_try_to_cancel(&cluster->histtimer));
 
 	if (cluster->parent) {
 		time_rem = hrtimer_get_remaining(
@@ -404,7 +405,7 @@ static void clusttimer_cancel(void)
 		if (ktime_to_us(time_rem) <= 0)
 			return;
 
-		hrtimer_try_to_cancel(&cluster->parent->histtimer);
+		RCU_NONIDLE(hrtimer_try_to_cancel(&cluster->parent->histtimer));
 	}
 }
 
@@ -423,8 +424,8 @@ static void clusttimer_start(struct lpm_cluster *cluster, uint32_t time_us)
 	ktime_t clust_ktime = ns_to_ktime(time_ns);
 
 	cluster->histtimer.function = clusttimer_fn;
-	hrtimer_start(&cluster->histtimer, clust_ktime,
-				HRTIMER_MODE_REL_PINNED);
+	RCU_NONIDLE(hrtimer_start(&cluster->histtimer, clust_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static void msm_pm_set_timer(uint32_t modified_time_us)
@@ -433,7 +434,9 @@ static void msm_pm_set_timer(uint32_t modified_time_us)
 	ktime_t modified_ktime = ns_to_ktime(modified_time_ns);
 
 	lpm_hrtimer.function = lpm_hrtimer_cb;
-	hrtimer_start(&lpm_hrtimer, modified_ktime, HRTIMER_MODE_REL_PINNED);
+	/* idle path: RCU is not watching here on 4.9 (hrtimer tracepoints) */
+	RCU_NONIDLE(hrtimer_start(&lpm_hrtimer, modified_ktime,
+				  HRTIMER_MODE_REL_PINNED));
 }
 
 static uint64_t lpm_cpuidle_predict(struct cpuidle_device *dev,
@@ -706,9 +709,9 @@ static int cpu_power_select(struct cpuidle_device *dev,
 	}
 
 done_select:
-	trace_cpu_power_select(best_level, sleep_us, latency_us, next_event_us);
+	trace_cpu_power_select_rcuidle(best_level, sleep_us, latency_us, next_event_us);
 
-	trace_cpu_pred_select(idx_restrict_time ? 2 : (predicted ? 1 : 0),
+	trace_cpu_pred_select_rcuidle(idx_restrict_time ? 2 : (predicted ? 1 : 0),
 			predicted, htime);
 
 	return best_level;
@@ -890,7 +893,7 @@ static void update_cluster_history(struct cluster_history *history, int idx)
 	if (history->nsamp < MAXSAMPLES)
 		history->nsamp++;
 
-	trace_cluster_pred_hist(cluster->cluster_name,
+	trace_cluster_pred_hist_rcuidle(cluster->cluster_name,
 		history->mode[history->hptr], history->resi[history->hptr],
 		history->hptr, tmr);
 
@@ -1008,7 +1011,7 @@ static int cluster_select(struct lpm_cluster *cluster, bool from_idle,
 
 	*ispred = predicted;
 
-	trace_cluster_pred_select(cluster->cluster_name, best_level, sleep_us,
+	trace_cluster_pred_select_rcuidle(cluster->cluster_name, best_level, sleep_us,
 						latency_us, predicted, pred_us);
 
 	return best_level;
@@ -1043,7 +1046,7 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 		update_debug_pc_event(CLUSTER_ENTER, idx,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
-		trace_cluster_enter(cluster->cluster_name, idx,
+		trace_cluster_enter_rcuidle(cluster->cluster_name, idx,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
 		lpm_stats_cluster_enter(cluster->stats, idx);
@@ -1216,7 +1219,7 @@ static void cluster_unprepare(struct lpm_cluster *cluster,
 	update_debug_pc_event(CLUSTER_EXIT, cluster->last_level,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
-	trace_cluster_exit(cluster->cluster_name, cluster->last_level,
+	trace_cluster_exit_rcuidle(cluster->cluster_name, cluster->last_level,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
 
@@ -1388,7 +1391,7 @@ static void update_history(struct cpuidle_device *dev, int idx)
 
 	history->mode[history->hptr] = idx;
 
-	trace_cpu_pred_hist(history->mode[history->hptr],
+	trace_cpu_pred_hist_rcuidle(history->mode[history->hptr],
 		history->resi[history->hptr], history->hptr, tmr);
 
 	if (history->nsamp < MAXSAMPLES)
@@ -1411,7 +1414,7 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	cpu_prepare(cpu, idx, true);
 	cluster_prepare(cpu->parent, cpumask, idx, true, start_time);
 
-	trace_cpu_idle_enter(idx);
+	trace_cpu_idle_enter_rcuidle(idx);
 	lpm_stats_cpu_enter(idx, start_time);
 
 	if (need_resched())
@@ -1427,7 +1430,7 @@ exit:
 	cpu_unprepare(cpu, idx, true);
 	dev->last_residency = ktime_us_delta(ktime_get(), start);
 	update_history(dev, idx);
-	trace_cpu_idle_exit(idx, success);
+	trace_cpu_idle_exit_rcuidle(idx, success);
 	if (lpm_prediction && cpu->lpm_prediction) {
 		histtimer_cancel();
 		clusttimer_cancel();

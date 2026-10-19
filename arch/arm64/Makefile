@@ -18,7 +18,7 @@ ifeq ($(CONFIG_RELOCATABLE), y)
 # Pass --no-apply-dynamic-relocs to restore pre-binutils-2.27 behaviour
 # for relative relocs, since this leads to better Image compression
 # with the relocation offsets always being zero.
-LDFLAGS_vmlinux		+= -pie -shared -Bsymbolic \
+LDFLAGS_vmlinux		+= -shared -Bsymbolic -z notext -z norelro \
 			$(call ld-option, --no-apply-dynamic-relocs)
 endif
 
@@ -66,11 +66,13 @@ ifeq ($(CONFIG_COMPAT_VDSO), y)
   ifeq ($(CROSS_COMPILE_ARM32),)
     $(error CROSS_COMPILE_ARM32 not defined or empty, the compat vDSO will not be built)
   else ifeq ($(cc-name),clang)
-    export CLANG_TRIPLE_ARM32 ?= $(CROSS_COMPILE_ARM32)
+    # clang (>= 16) rejects an 'androidkernel' environment in --target; the
+    # GNU tools keep the arm-linux-androidkernel- prefix, clang gets gnueabi.
+    export CLANG_TRIPLE_ARM32 ?= $(subst -androidkernel-,-gnueabi-,$(CROSS_COMPILE_ARM32))
     export CLANG_TARGET_ARM32 := --target=$(notdir $(CLANG_TRIPLE_ARM32:%-=%))
     export GCC_TOOLCHAIN32_DIR := $(dir $(shell which $(CROSS_COMPILE_ARM32)ld))
     export GCC_TOOLCHAIN32 := $(realpath $(GCC_TOOLCHAIN32_DIR)/..)
-    export CLANG_PREFIX32 := --prefix=$(GCC_TOOLCHAIN32_DIR)
+    export CLANG_PREFIX32 := --prefix=$(GCC_TOOLCHAIN32_DIR)$(notdir $(CROSS_COMPILE_ARM32))
     export CLANG_GCC32_TC := --gcc-toolchain=$(GCC_TOOLCHAIN32)
     export CONFIG_VDSO32 := y
     vdso32 := -DCONFIG_VDSO32=1
@@ -94,6 +96,10 @@ KBUILD_CFLAGS	+= $(lseinstr) $(vdso32)
 KBUILD_CFLAGS	+= -fno-asynchronous-unwind-tables
 KBUILD_CFLAGS	+= $(call cc-option, -mpc-relative-literal-loads)
 KBUILD_CFLAGS	+= -fno-pic
+# Tune code generation for the SDM845 Kryo 385 cores
+# (Cortex-A75-derived big, Cortex-A55-derived little). FP/SIMD stays off via
+# -mgeneral-regs-only; the effect is the scheduling model plus v8.2 integer ops.
+KBUILD_CFLAGS	+= $(call cc-option,-mcpu=cortex-a55+crypto)
 KBUILD_AFLAGS	+= $(lseinstr) $(vdso32)
 
 ifeq ($(CONFIG_SHADOW_CALL_STACK), y)
@@ -109,6 +115,10 @@ else
 KBUILD_CPPFLAGS	+= -mlittle-endian
 AS		+= -EL
 LD		+= -EL
+# ld.lld needs the emulation when an "ld -r" has no ELF input (non-LTO builds
+# link directories whose built-ins are all empty archives). From upstream
+# 3d6a7b99e3fa ("arm64: ensure the kernel is compiled for LP64").
+LDFLAGS		+= -maarch64linux
 UTS_MACHINE	:= aarch64
 endif
 

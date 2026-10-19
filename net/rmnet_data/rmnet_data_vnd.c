@@ -417,8 +417,18 @@ static int rmnet_vnd_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	return rc;
 }
 
+/*
+ * Stacked on the physical (rmnet_ipa) device, same ARPHRD_NONE type: own
+ * tx/addr lock classes so nested xmit isn't reported as recursion.
+ */
+static int rmnet_vnd_ndo_init(struct net_device *dev)
+{
+	netdev_lockdep_set_classes(dev);
+	return 0;
+}
+
 static const struct net_device_ops rmnet_data_vnd_ops = {
-	.ndo_init = 0,
+	.ndo_init = rmnet_vnd_ndo_init,
 	.ndo_start_xmit = rmnet_vnd_start_xmit,
 	.ndo_do_ioctl = rmnet_vnd_ioctl,
 	.ndo_change_mtu = rmnet_vnd_change_mtu,

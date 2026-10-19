@@ -152,10 +152,10 @@
 
 #ifdef CONFIG_TRACING
 #define TRACE_PRINTKS() VMLINUX_SYMBOL(__start___trace_bprintk_fmt) = .;      \
-			 *(__trace_printk_fmt) /* Trace_printk fmt' pointer */ \
+			 KEEP(*(__trace_printk_fmt)) /* Trace_printk fmt' pointer */ \
 			 VMLINUX_SYMBOL(__stop___trace_bprintk_fmt) = .;
 #define TRACEPOINT_STR() VMLINUX_SYMBOL(__start___tracepoint_str) = .;	\
-			 *(__tracepoint_str) /* Trace_printk fmt' pointer */ \
+			 KEEP(*(__tracepoint_str)) /* Trace_printk fmt' pointer */ \
 			 VMLINUX_SYMBOL(__stop___tracepoint_str) = .;
 #else
 #define TRACE_PRINTKS()
@@ -238,11 +238,11 @@
 	/* implement dynamic printk debug */				\
 	. = ALIGN(8);                                                   \
 	VMLINUX_SYMBOL(__start___jump_table) = .;                       \
-	*(__jump_table)                                                 \
+	KEEP(*(__jump_table))                                                 \
 	VMLINUX_SYMBOL(__stop___jump_table) = .;                        \
 	. = ALIGN(8);							\
 	VMLINUX_SYMBOL(__start___verbose) = .;                          \
-	*(__verbose)                                                    \
+	KEEP(*(__verbose))                                                    \
 	VMLINUX_SYMBOL(__stop___verbose) = .;				\
 	LIKELY_PROFILE()		       				\
 	BRANCH_PROFILE()						\
@@ -303,7 +303,7 @@
 		*(__vermagic)		/* Kernel version magic */	\
 		. = ALIGN(8);						\
 		VMLINUX_SYMBOL(__start___tracepoints_ptrs) = .;		\
-		*(__tracepoints_ptrs)	/* Tracepoints: pointer array */\
+		KEEP(*(__tracepoints_ptrs))	/* Tracepoints: pointer array */\
 		VMLINUX_SYMBOL(__stop___tracepoints_ptrs) = .;		\
 		*(__tracepoints_strings)/* Tracepoints: strings */	\
 	}								\
@@ -443,7 +443,7 @@
 	/* Built-in module versions. */					\
 	__modver : AT(ADDR(__modver) - LOAD_OFFSET) {			\
 		VMLINUX_SYMBOL(__start___modver) = .;			\
-		*(__modver)						\
+		KEEP(*(__modver))						\
 		VMLINUX_SYMBOL(__stop___modver) = .;			\
 		. = ALIGN((align));					\
 		VMLINUX_SYMBOL(__end_rodata) = .;			\

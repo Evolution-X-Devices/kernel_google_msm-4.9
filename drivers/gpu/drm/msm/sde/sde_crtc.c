@@ -2181,12 +2181,12 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 	SDE_DEBUG("crtc%d\n", crtc->base.id);
 	SDE_EVT32_VERBOSE(DRMID(crtc), event);
 
-	spin_lock_irqsave(&sde_crtc->spin_lock, flags);
+	spin_lock_irqsave(&sde_crtc->fevent_spin_lock, flags);
 	fevent = list_first_entry_or_null(&sde_crtc->frame_event_list,
 			struct sde_crtc_frame_event, list);
 	if (fevent)
 		list_del_init(&fevent->list);
-	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
+	spin_unlock_irqrestore(&sde_crtc->fevent_spin_lock, flags);
 
 	if (!fevent) {
 		SDE_ERROR("crtc%d event %d overflow\n",
@@ -2418,9 +2418,9 @@ static void sde_crtc_frame_event_work(struct kthread_work *work)
 		SDE_ERROR("crtc%d ts:%lld received panel dead event\n",
 				crtc->base.id, ktime_to_ns(fevent->ts));
 
-	spin_lock_irqsave(&sde_crtc->spin_lock, flags);
+	spin_lock_irqsave(&sde_crtc->fevent_spin_lock, flags);
 	list_add_tail(&fevent->list, &sde_crtc->frame_event_list);
-	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
+	spin_unlock_irqrestore(&sde_crtc->fevent_spin_lock, flags);
 	SDE_ATRACE_END("crtc_frame_event");
 }
 
@@ -4205,10 +4205,6 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 			sde_encoder_control_idle_pc(encoder, true);
 	}
 
-	if (sde_crtc->power_event)
-		sde_power_handle_unregister_event(&priv->phandle,
-				sde_crtc->power_event);
-
 	/**
 	 * All callbacks are unregistered and frame done waits are complete
 	 * at this point. No buffers are accessed by hardware.
@@ -4231,6 +4227,17 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 	cstate->bw_split_vote = false;
 
 	mutex_unlock(&sde_crtc->crtc_lock);
+
+	/*
+	 * Unregister after dropping crtc_lock: unregistering takes phandle_lock,
+	 * and sde_power_resource_enable() calls sde_crtc_handle_power_event()
+	 * (takes crtc_lock) with phandle_lock held -- a display power event
+	 * racing this disable deadlocked. A callback that slips in before this
+	 * already ran after the disable before (it waited on crtc_lock).
+	 */
+	if (sde_crtc->power_event)
+		sde_power_handle_unregister_event(&priv->phandle,
+				sde_crtc->power_event);
 }
 
 static void sde_crtc_enable(struct drm_crtc *crtc)
@@ -5984,6 +5991,7 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 
 	mutex_init(&sde_crtc->crtc_lock);
 	spin_lock_init(&sde_crtc->spin_lock);
+	spin_lock_init(&sde_crtc->fevent_spin_lock);
 	atomic_set(&sde_crtc->frame_pending, 0);
 
 	mutex_init(&sde_crtc->rp_lock);

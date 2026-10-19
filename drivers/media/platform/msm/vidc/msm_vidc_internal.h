@@ -122,11 +122,15 @@ struct msm_vidc_list {
 	struct mutex lock;
 };
 
-static inline void INIT_MSM_VIDC_LIST(struct msm_vidc_list *mlist)
-{
-	mutex_init(&mlist->lock);
-	INIT_LIST_HEAD(&mlist->list);
-}
+/*
+ * A macro, not an inline function: mutex_init() then gives every list its
+ * own lockdep class (one per call site) instead of one shared by all the
+ * lists, whose locks nest (registeredbufs -> buffer_tags in qbuf).
+ */
+#define INIT_MSM_VIDC_LIST(mlist) do {			\
+	mutex_init(&(mlist)->lock);			\
+	INIT_LIST_HEAD(&(mlist)->list);			\
+} while (0)
 
 static inline void DEINIT_MSM_VIDC_LIST(struct msm_vidc_list *mlist)
 {
